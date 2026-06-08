@@ -63,35 +63,35 @@ def show_budgeting(household_id: int):
                     with st.expander("⚙️ Configure Budget Limits", expanded=False):
                         with st.form("budget_limits_form"):
                             st.write("Set limit amounts for each category for this period:")
-                        item_inputs = {}
-                        for cat_name, cat_id in cat_choices.items():
-                            # Fetch existing item limit
-                            item = db.query(BudgetItem).filter(
-                                BudgetItem.budget_id == budget.id,
-                                BudgetItem.category_id == cat_id
-                            ).first()
-                            existing_limit = item.limit_amount if item else 0.0
-                            item_inputs[cat_id] = st.number_input(f"{cat_name} Limit", min_value=0.0, value=existing_limit, step=10.0)
-                            
-                        save_limits = st.form_submit_button("Save Budget Limits", type="primary")
-                        if save_limits:
-                            total_limit = 0.0
-                            for cat_id, limit_val in item_inputs.items():
-                                total_limit += limit_val
-                                # Create or update
+                            item_inputs = {}
+                            for cat_name, cat_id in cat_choices.items():
+                                # Fetch existing item limit
                                 item = db.query(BudgetItem).filter(
                                     BudgetItem.budget_id == budget.id,
                                     BudgetItem.category_id == cat_id
                                 ).first()
-                                if item:
-                                    item.limit_amount = limit_val
-                                else:
-                                    db.add(BudgetItem(budget_id=budget.id, category_id=cat_id, limit_amount=limit_val))
-                                    
-                            budget.total_limit = total_limit
-                            db.commit()
-                            st.success("Budget limits updated successfully!")
-                            st.rerun()
+                                existing_limit = item.limit_amount if item else 0.0
+                                item_inputs[cat_id] = st.number_input(f"{cat_name} Limit", min_value=0.0, value=existing_limit, step=10.0)
+                                
+                            save_limits = st.form_submit_button("Save Budget Limits", type="primary")
+                            if save_limits:
+                                total_limit = 0.0
+                                for cat_id, limit_val in item_inputs.items():
+                                    total_limit += limit_val
+                                    # Create or update
+                                    item = db.query(BudgetItem).filter(
+                                        BudgetItem.budget_id == budget.id,
+                                        BudgetItem.category_id == cat_id
+                                    ).first()
+                                    if item:
+                                        item.limit_amount = limit_val
+                                    else:
+                                        db.add(BudgetItem(budget_id=budget.id, category_id=cat_id, limit_amount=limit_val))
+                                        
+                                budget.total_limit = total_limit
+                                db.commit()
+                                st.success("Budget limits updated successfully!")
+                                st.rerun()
                             
                 # Display Budget vs Actual Table
                 st.write("")
@@ -159,34 +159,34 @@ def show_budgeting(household_id: int):
                 with st.expander("➕ Create Sinking Fund", expanded=False):
                     with st.form("create_sinking_fund_form"):
                         col1, col2 = st.columns(2)
-                    with col1:
-                        sf_name = st.selectbox("Fund Name / Type", SINKING_FUND_TYPES)
-                        sf_target = st.number_input("Target Goal Amount", min_value=10.0, value=500.0, step=50.0)
-                        sf_current = st.number_input("Starting Balance", min_value=0.0, value=0.0, step=10.0)
-                    with col2:
-                        sf_date = st.date_input("Target Date", datetime.date.today() + datetime.timedelta(days=180))
-                        sf_freq = st.selectbox("Contribution Frequency", ["Weekly", "Fortnightly", "Monthly"], index=1)
-                        
-                    submit_sf = st.form_submit_button("Create Fund", type="primary")
-                    if submit_sf:
-                        # Calculate initial contribution
-                        days_left = (sf_date - datetime.date.today()).days
-                        periods_left = max(1.0, days_left / (14.0 if sf_freq == "Fortnightly" else 7.0 if sf_freq == "Weekly" else 30.0))
-                        contrib = max(0.0, (sf_target - sf_current) / periods_left)
-                        
-                        sf = SinkingFund(
-                            household_id=household_id,
-                            name=sf_name,
-                            target_amount=sf_target,
-                            current_amount=sf_current,
-                            target_date=sf_date,
-                            contribution_amount=contrib,
-                            frequency=sf_freq.lower()
-                        )
-                        db.add(sf)
-                        db.commit()
-                        st.success("Sinking Fund created successfully!")
-                        st.rerun()
+                        with col1:
+                            sf_name = st.selectbox("Fund Name / Type", SINKING_FUND_TYPES)
+                            sf_target = st.number_input("Target Goal Amount", min_value=10.0, value=500.0, step=50.0)
+                            sf_current = st.number_input("Starting Balance", min_value=0.0, value=0.0, step=10.0)
+                        with col2:
+                            sf_date = st.date_input("Target Date", datetime.date.today() + datetime.timedelta(days=180))
+                            sf_freq = st.selectbox("Contribution Frequency", ["Weekly", "Fortnightly", "Monthly"], index=1)
+                            
+                        submit_sf = st.form_submit_button("Create Fund", type="primary")
+                        if submit_sf:
+                            # Calculate initial contribution
+                            days_left = (sf_date - datetime.date.today()).days
+                            periods_left = max(1.0, days_left / (14.0 if sf_freq == "Fortnightly" else 7.0 if sf_freq == "Weekly" else 30.0))
+                            contrib = max(0.0, (sf_target - sf_current) / periods_left)
+                            
+                            sf = SinkingFund(
+                                household_id=household_id,
+                                name=sf_name,
+                                target_amount=sf_target,
+                                current_amount=sf_current,
+                                target_date=sf_date,
+                                contribution_amount=contrib,
+                                frequency=sf_freq.lower()
+                            )
+                            db.add(sf)
+                            db.commit()
+                            st.success("Sinking Fund created successfully!")
+                            st.rerun()
                         
             # List Sinking Funds
             funds = db.query(SinkingFund).filter(SinkingFund.household_id == household_id).all()

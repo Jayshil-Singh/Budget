@@ -44,31 +44,31 @@ def show_savings_debt(household_id: int):
                 with st.expander("➕ Create New Savings Goal", expanded=False):
                     with st.form("create_goal_form"):
                         col1, col2 = st.columns(2)
-                    with col1:
-                        g_name = st.selectbox("Goal Category", SAVINGS_GOALS_TYPES)
-                        g_custom_name = st.text_input("Custom Goal Name (Optional)", placeholder="e.g. Dream House Fund")
-                        g_target = st.number_input("Target Amount", min_value=10.0, value=2000.0, step=100.0)
-                    with col2:
-                        g_current = st.number_input("Current Saved Balance", min_value=0.0, value=100.0, step=50.0)
-                        g_date = st.date_input("Target Date", datetime.date.today() + datetime.timedelta(days=365))
-                        g_priority = st.selectbox("Priority Level", ["Low", "Medium", "High"], index=1)
-                        
-                    submit_goal = st.form_submit_button("Create Goal", type="primary")
-                    if submit_goal:
-                        final_name = g_custom_name if g_custom_name else g_name
-                        goal = SavingsGoal(
-                            household_id=household_id,
-                            name=final_name,
-                            target_amount=g_target,
-                            current_amount=g_current,
-                            target_date=g_date,
-                            priority=g_priority.lower(),
-                            status="active"
-                        )
-                        db.add(goal)
-                        db.commit()
-                        st.success("Savings Goal created successfully!")
-                        st.rerun()
+                        with col1:
+                            g_name = st.selectbox("Goal Category", SAVINGS_GOALS_TYPES)
+                            g_custom_name = st.text_input("Custom Goal Name (Optional)", placeholder="e.g. Dream House Fund")
+                            g_target = st.number_input("Target Amount", min_value=10.0, value=2000.0, step=100.0)
+                        with col2:
+                            g_current = st.number_input("Current Saved Balance", min_value=0.0, value=100.0, step=50.0)
+                            g_date = st.date_input("Target Date", datetime.date.today() + datetime.timedelta(days=365))
+                            g_priority = st.selectbox("Priority Level", ["Low", "Medium", "High"], index=1)
+                            
+                        submit_goal = st.form_submit_button("Create Goal", type="primary")
+                        if submit_goal:
+                            final_name = g_custom_name if g_custom_name else g_name
+                            goal = SavingsGoal(
+                                household_id=household_id,
+                                name=final_name,
+                                target_amount=g_target,
+                                current_amount=g_current,
+                                target_date=g_date,
+                                priority=g_priority.lower(),
+                                status="active"
+                            )
+                            db.add(goal)
+                            db.commit()
+                            st.success("Savings Goal created successfully!")
+                            st.rerun()
                         
             # 3. List active goals
             st.subheader("Active Savings Goals")
@@ -120,30 +120,30 @@ def show_savings_debt(household_id: int):
                 with st.expander("➕ Add Outstanding Debt", expanded=False):
                     with st.form("add_debt_form"):
                         col1, col2 = st.columns(2)
-                    with col1:
-                        d_name = st.text_input("Debt Name", placeholder="e.g. BSP Car Loan")
-                        d_type = st.selectbox("Debt Type", DEBT_TYPES)
-                        d_balance = st.number_input("Current Balance", min_value=1.0, value=5000.0, step=100.0)
-                    with col2:
-                        d_original = st.number_input("Original Borrowed Balance", min_value=1.0, value=7500.0, step=100.0)
-                        d_rate = st.number_input("Interest Rate (%)", min_value=0.0, value=6.5, step=0.1)
-                        d_min_pay = st.number_input("Minimum Payment Amount", min_value=1.0, value=150.0, step=10.0)
-                        
-                    submit_debt = st.form_submit_button("Add Debt", type="primary")
-                    if submit_debt:
-                        db.add(Debt(
-                            household_id=household_id,
-                            name=d_name,
-                            type=d_type,
-                            current_balance=d_balance,
-                            original_balance=d_original,
-                            interest_rate=d_rate,
-                            minimum_payment=d_min_pay,
-                            start_date=datetime.date.today()
-                        ))
-                        db.commit()
-                        st.success("Debt record added successfully!")
-                        st.rerun()
+                        with col1:
+                            d_name = st.text_input("Debt Name", placeholder="e.g. BSP Car Loan")
+                            d_type = st.selectbox("Debt Type", DEBT_TYPES)
+                            d_balance = st.number_input("Current Balance", min_value=1.0, value=5000.0, step=100.0)
+                        with col2:
+                            d_original = st.number_input("Original Borrowed Balance", min_value=1.0, value=7500.0, step=100.0)
+                            d_rate = st.number_input("Interest Rate (%)", min_value=0.0, value=6.5, step=0.1)
+                            d_min_pay = st.number_input("Minimum Payment Amount", min_value=1.0, value=150.0, step=10.0)
+                            
+                        submit_debt = st.form_submit_button("Add Debt", type="primary")
+                        if submit_debt:
+                            db.add(Debt(
+                                household_id=household_id,
+                                name=d_name,
+                                type=d_type,
+                                current_balance=d_balance,
+                                original_balance=d_original,
+                                interest_rate=d_rate,
+                                minimum_payment=d_min_pay,
+                                start_date=datetime.date.today()
+                            ))
+                            db.commit()
+                            st.success("Debt record added successfully!")
+                            st.rerun()
                         
             # 2. List Debts
             debts = db.query(Debt).filter(Debt.household_id == household_id).all()
