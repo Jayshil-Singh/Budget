@@ -1,12 +1,25 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from contextlib import contextmanager
 import config
 
+# Ensure the database file is read-write if it's a local SQLite file (prevents read-only error on Streamlit Cloud)
+if config.DATABASE_URL.startswith("sqlite:///"):
+    db_filename = config.DATABASE_URL.replace("sqlite:///", "")
+    if os.path.exists(db_filename):
+        try:
+            os.chmod(db_filename, 0o666)
+        except Exception:
+            pass
+
 # Create SQLAlchemy engine
 engine = create_engine(
     config.DATABASE_URL,
-    connect_args={"check_same_thread": False} if config.DATABASE_URL.startswith("sqlite") else {}
+    connect_args={
+        "check_same_thread": False,
+        "timeout": 30
+    } if config.DATABASE_URL.startswith("sqlite") else {}
 )
 
 # Create SessionLocal class
