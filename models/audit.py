@@ -80,3 +80,13 @@ class Attachment(Base):
     file_size = Column(Integer, nullable=True)
     content_type = Column(String, nullable=True)
     uploaded_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+class EmailLog(Base):
+    __tablename__ = "email_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    recipient = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    status = Column(String, nullable=False)  # Success, Simulated, Failed: <error>
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)

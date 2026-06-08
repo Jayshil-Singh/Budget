@@ -40,25 +40,49 @@ def send_email_notification(title: str, message: str, to_email: str = None) -> b
     Sends an email notification. Fallback to simulation if config is missing.
     """
     recipient = to_email if to_email else config.EMAIL_SMTP_USER
+    status = "Pending"
+    success = False
+    
     if not config.EMAIL_SMTP_USER or not config.EMAIL_SMTP_PASSWORD:
         # Simulated delivery log
         print(f"[SIMULATED EMAIL] To: {recipient} | Subject: {title} | Body: {message}")
-        return True
-        
+        status = "Simulated"
+        success = True
+    else:
+        try:
+            msg = MIMEText(message)
+            msg['Subject'] = title
+            msg['From'] = config.EMAIL_SMTP_USER
+            msg['To'] = recipient
+            
+            with smtplib.SMTP(config.EMAIL_SMTP_SERVER, config.EMAIL_SMTP_PORT) as server:
+                server.starttls()
+                server.login(config.EMAIL_SMTP_USER, config.EMAIL_SMTP_PASSWORD)
+                server.send_message(msg)
+            status = "Success"
+            success = True
+        except Exception as e:
+            print(f"[EMAIL ERROR] Failed to send email to {recipient}: {e}")
+            status = f"Failed: {str(e)}"
+            success = False
+
+    # Log to Database
+    from database import SessionLocal
+    from models.audit import EmailLog
     try:
-        msg = MIMEText(message)
-        msg['Subject'] = title
-        msg['From'] = config.EMAIL_SMTP_USER
-        msg['To'] = recipient
+        with SessionLocal() as db:
+            log = EmailLog(
+                recipient=recipient,
+                subject=title,
+                body=message,
+                status=status
+            )
+            db.add(log)
+            db.commit()
+    except Exception as db_err:
+        print(f"[DATABASE ERROR] Failed to log email: {db_err}")
         
-        with smtplib.SMTP(config.EMAIL_SMTP_SERVER, config.EMAIL_SMTP_PORT) as server:
-            server.starttls()
-            server.login(config.EMAIL_SMTP_USER, config.EMAIL_SMTP_PASSWORD)
-            server.send_message(msg)
-        return True
-    except Exception as e:
-        print(f"[EMAIL ERROR] Failed to send email to {recipient}: {e}")
-        return False
+    return success
 
 def send_whatsapp_notification(title: str, message: str) -> bool:
     """
