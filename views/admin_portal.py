@@ -6,6 +6,7 @@ from models.household import Household
 from models.finance import Income, Expense, ExpenseCategory
 from models.audit import AuditLog
 from services.auth_service import create_new_user, disable_user, reset_user_password
+from services.notification_service import send_email_notification
 from config import EXPENSE_CATEGORIES
 
 def show_admin_portal(admin_user_id: int):
@@ -50,7 +51,20 @@ def show_admin_portal(admin_user_id: int):
                         else:
                             res = create_new_user(db, new_email, new_pwd, new_name, new_role)
                             if res:
-                                st.success(f"Registered user {new_name} as {new_role.upper()} successfully!")
+                                email_subject = "Your SmartBudget AI Account Credentials"
+                                email_body = (
+                                    f"Hello {new_name},\n\n"
+                                    f"An administrator has created a SmartBudget AI account for you.\n\n"
+                                    f"Here are your login credentials:\n"
+                                    f"Email: {new_email}\n"
+                                    f"Password: {new_pwd}\n\n"
+                                    f"You can access the application here:\n"
+                                    f"https://smart-budget.streamlit.app/\n\n"
+                                    f"Regards,\n"
+                                    f"SmartBudget AI Team"
+                                )
+                                send_email_notification(email_subject, email_body, to_email=new_email)
+                                st.success(f"Registered user {new_name} as {new_role.upper()} successfully and sent credentials email!")
                                 st.rerun()
                             else:
                                 st.error("Email is already registered.")

@@ -35,20 +35,21 @@ def create_notification(
         
     return notification
 
-def send_email_notification(title: str, message: str) -> bool:
+def send_email_notification(title: str, message: str, to_email: str = None) -> bool:
     """
     Sends an email notification. Fallback to simulation if config is missing.
     """
+    recipient = to_email if to_email else config.EMAIL_SMTP_USER
     if not config.EMAIL_SMTP_USER or not config.EMAIL_SMTP_PASSWORD:
         # Simulated delivery log
-        print(f"[SIMULATED EMAIL] To: Household Members | Subject: {title} | Body: {message}")
+        print(f"[SIMULATED EMAIL] To: {recipient} | Subject: {title} | Body: {message}")
         return True
         
     try:
         msg = MIMEText(message)
         msg['Subject'] = title
         msg['From'] = config.EMAIL_SMTP_USER
-        msg['To'] = config.EMAIL_SMTP_USER # Send to self/owner as notification receiver
+        msg['To'] = recipient
         
         with smtplib.SMTP(config.EMAIL_SMTP_SERVER, config.EMAIL_SMTP_PORT) as server:
             server.starttls()
@@ -56,7 +57,7 @@ def send_email_notification(title: str, message: str) -> bool:
             server.send_message(msg)
         return True
     except Exception as e:
-        print(f"[EMAIL ERROR] Failed to send email: {e}")
+        print(f"[EMAIL ERROR] Failed to send email to {recipient}: {e}")
         return False
 
 def send_whatsapp_notification(title: str, message: str) -> bool:
