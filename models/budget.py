@@ -5,6 +5,7 @@ from models.base import Base
 
 class Budget(Base):
     __tablename__ = "budgets"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -22,6 +23,7 @@ class Budget(Base):
 
 class BudgetItem(Base):
     __tablename__ = "budget_items"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     budget_id = Column(Integer, ForeignKey("budgets.id", ondelete="CASCADE"), nullable=False)
@@ -35,6 +37,7 @@ class BudgetItem(Base):
 
 class SinkingFund(Base):
     __tablename__ = "sinking_funds"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -52,6 +55,7 @@ class SinkingFund(Base):
 
 class SavingsGoal(Base):
     __tablename__ = "savings_goals"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -68,6 +72,7 @@ class SavingsGoal(Base):
 
 class Debt(Base):
     __tablename__ = "debts"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)

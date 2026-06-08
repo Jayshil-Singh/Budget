@@ -5,6 +5,7 @@ from models.base import Base
 
 class PayPeriod(Base):
     __tablename__ = "pay_periods"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -21,6 +22,7 @@ class PayPeriod(Base):
 
 class ExpenseCategory(Base):
     __tablename__ = "expense_categories"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=True) # Null means system category
@@ -36,6 +38,7 @@ class ExpenseCategory(Base):
 
 class Income(Base):
     __tablename__ = "income"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -55,6 +58,7 @@ class Income(Base):
 
 class Expense(Base):
     __tablename__ = "expenses"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -77,6 +81,7 @@ class Expense(Base):
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -95,6 +100,7 @@ class Subscription(Base):
 
 class BankTransaction(Base):
     __tablename__ = "bank_transactions"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)

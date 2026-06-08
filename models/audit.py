@@ -5,6 +5,7 @@ from models.base import Base
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -17,6 +18,7 @@ class AuditLog(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -32,6 +34,7 @@ class Notification(Base):
 
 class Report(Base):
     __tablename__ = "reports"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -45,6 +48,7 @@ class Report(Base):
 
 class FinancialScore(Base):
     __tablename__ = "financial_scores"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -58,6 +62,7 @@ class FinancialScore(Base):
 
 class AIInsight(Base):
     __tablename__ = "ai_insights"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
@@ -72,6 +77,7 @@ class AIInsight(Base):
 
 class Attachment(Base):
     __tablename__ = "attachments"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=True)
@@ -83,6 +89,7 @@ class Attachment(Base):
 
 class EmailLog(Base):
     __tablename__ = "email_logs"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     recipient = Column(String, nullable=False)

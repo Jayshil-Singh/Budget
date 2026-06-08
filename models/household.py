@@ -5,6 +5,7 @@ from models.base import Base
 
 class Household(Base):
     __tablename__ = "households"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
@@ -41,7 +42,7 @@ class HouseholdMember(Base):
     joined_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     # Unique constraint so a user is only added once per household
-    __table_args__ = (UniqueConstraint('household_id', 'user_id', name='_household_user_uc'),)
+    __table_args__ = (UniqueConstraint('household_id', 'user_id', name='_household_user_uc'), {'extend_existing': True})
     
     # Relationships
     household = relationship("Household", back_populates="members")
@@ -58,7 +59,7 @@ class Setting(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     
     # Unique constraint per household setting key
-    __table_args__ = (UniqueConstraint('household_id', 'key', name='_household_setting_key_uc'),)
+    __table_args__ = (UniqueConstraint('household_id', 'key', name='_household_setting_key_uc'), {'extend_existing': True})
     
     # Relationships
     household = relationship("Household", back_populates="settings")

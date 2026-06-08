@@ -5,6 +5,7 @@ from models.base import Base
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
@@ -22,6 +23,7 @@ class User(Base):
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
