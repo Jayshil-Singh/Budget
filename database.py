@@ -1,4 +1,5 @@
 import os
+import streamlit as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from contextlib import contextmanager
@@ -41,6 +42,7 @@ def get_db():
     finally:
         db.close()
 
+@st.cache_resource
 def init_db():
     """
     Initializes database tables.
