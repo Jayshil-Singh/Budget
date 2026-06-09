@@ -9,12 +9,13 @@ from utils.security import hash_password
 from services.finance_service import generate_pay_periods
 from config import EXPENSE_CATEGORIES
 
-def seed_data():
+def seed_data(skip_init: bool = False):
     """
     Seeds database with initial system configurations and demo data.
     """
-    print("Initializing database...")
-    init_db()
+    if not skip_init:
+        print("Initializing database...")
+        init_db()
     
     with get_db() as db:
         # Check if already seeded

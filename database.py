@@ -60,6 +60,6 @@ def init_db():
     # Auto-seed the database if newly created
     try:
         from seed import seed_data
-        seed_data()
+        seed_data(skip_init=True)
     except Exception as e:
         print(f"[AUTO-SEED] Skipping or failed: {e}")
