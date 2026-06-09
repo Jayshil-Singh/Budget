@@ -479,3 +479,106 @@ def show_dashboard(household_id: int):
                                 notif.is_read = True
                                 db.commit()
                                 st.rerun()
+
+        # ----------------------------------------------------
+        # ROW 7: SAVINGS CHALLENGES WIDGET
+        # ----------------------------------------------------
+        import json
+        from models.household import Setting
+
+        CHALLENGE_TEMPLATES = {
+            "52-Week Challenge": {
+                "desc": "Save incremental amounts each week — Week 1: $1, Week 2: $2 … Week 52: $52. Total saved: $1,378.",
+                "icon": "📅",
+                "total_weeks": 52
+            },
+            "FJD $5 No-Spend Streak": {
+                "desc": "Put away FJD $5 for every day you make zero discretionary purchases.",
+                "icon": "🚫",
+                "total_weeks": None
+            },
+            "30-Day Coffee Challenge": {
+                "desc": "Skip buying coffee for 30 days. Save your average FJD $4.50/day — total FJD $135.",
+                "icon": "☕",
+                "total_weeks": None
+            }
+        }
+
+        st.write("")
+        with st.container(border=True):
+            st.subheader("🏅 Savings Challenges")
+            st.caption("Pick a challenge, track your progress, and build the habit of saving.")
+
+            # Load challenge state from Settings
+            setting_key = "active_savings_challenges"
+            setting_row = db.query(Setting).filter(
+                Setting.household_id == household_id,
+                Setting.key == setting_key
+            ).first()
+
+            challenges_state = json.loads(setting_row.value) if setting_row else {}
+
+            def save_challenges(state_dict):
+                nonlocal setting_row
+                if setting_row:
+                    setting_row.value = json.dumps(state_dict)
+                else:
+                    new_s = Setting(
+                        household_id=household_id,
+                        key=setting_key,
+                        value=json.dumps(state_dict)
+                    )
+                    db.add(new_s)
+                db.commit()
+
+            ch_cols = st.columns(len(CHALLENGE_TEMPLATES))
+            for idx, (ch_name, ch_info) in enumerate(CHALLENGE_TEMPLATES.items()):
+                with ch_cols[idx]:
+                    with st.container(border=True):
+                        st.markdown(f"### {ch_info['icon']} {ch_name}")
+                        st.caption(ch_info["desc"])
+
+                        ch_state = challenges_state.get(ch_name, {})
+                        is_active = ch_state.get("active", False)
+                        contributions = ch_state.get("contributions", 0)
+                        total_saved = ch_state.get("total_saved", 0.0)
+
+                        if is_active:
+                            st.success(f"✅ Active — FJD **{total_saved:.2f}** saved")
+                            if ch_name == "52-Week Challenge":
+                                pct = min(100, (contributions / 52) * 100)
+                                st.progress(int(pct), text=f"Week {contributions}/52")
+                            else:
+                                st.metric("Contributions Logged", contributions)
+
+                            contrib_amount = st.number_input(
+                                "Log Contribution (FJD)",
+                                min_value=0.01, value=5.0, step=1.0,
+                                key=f"contrib_{idx}"
+                            )
+                            col_ca, col_cb = st.columns(2)
+                            with col_ca:
+                                if st.button("➕ Add", key=f"add_{idx}", use_container_width=True):
+                                    ch_state["contributions"] = contributions + 1
+                                    ch_state["total_saved"] = total_saved + contrib_amount
+                                    challenges_state[ch_name] = ch_state
+                                    save_challenges(challenges_state)
+                                    st.rerun()
+                            with col_cb:
+                                if st.button("⏹ Stop", key=f"stop_{idx}", use_container_width=True):
+                                    ch_state["active"] = False
+                                    challenges_state[ch_name] = ch_state
+                                    save_challenges(challenges_state)
+                                    st.rerun()
+                        else:
+                            if total_saved > 0:
+                                st.info(f"Completed — FJD {total_saved:.2f} saved in {contributions} contributions.")
+                            if st.button("▶ Start Challenge", key=f"start_{idx}", use_container_width=True, type="primary"):
+                                challenges_state[ch_name] = {
+                                    "active": True,
+                                    "contributions": 0,
+                                    "total_saved": 0.0
+                                }
+                                save_challenges(challenges_state)
+                                st.rerun()
+

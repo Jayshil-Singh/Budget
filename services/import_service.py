@@ -45,6 +45,23 @@ def guess_category_by_description(description: str, db: DBSession, household_id:
     
     return cat.id if cat else None
 
+def load_bank_csv_safely(text_data: str) -> pd.DataFrame | None:
+    lines = text_data.splitlines()
+    target_keywords = ["date", "details", "description", "withdrawal", "deposit", "amount", "debit", "credit", "particulars"]
+    start_idx = 0
+    for idx, line in enumerate(lines[:15]):
+        line_lower = line.lower()
+        if any(kw in line_lower for kw in target_keywords):
+            if "," in line or ";" in line:
+                start_idx = idx
+                break
+    
+    clean_csv_data = "\n".join(lines[start_idx:])
+    try:
+        return pd.read_csv(io.StringIO(clean_csv_data))
+    except Exception:
+        return None
+
 def parse_bank_csv(
     db: DBSession, 
     household_id: int, 
@@ -62,14 +79,8 @@ def parse_bank_csv(
     except UnicodeDecodeError:
         text_data = file_contents.decode("latin-1")
         
-    df = None
-    # Load into DataFrame dynamically to clean headers
-    try:
-        df = pd.read_csv(io.StringIO(text_data))
-    except Exception:
-        return 0, 0, 0
-        
-    if df.empty:
+    df = load_bank_csv_safely(text_data)
+    if df is None or df.empty:
         return 0, 0, 0
         
     imported = 0
@@ -192,10 +203,16 @@ def parse_date_flexible(val) -> datetime.date | None:
 def parse_float_flexible(val) -> float:
     """
     Tries to clean a cell value and parse it into a clean float.
+    Handles currency symbols, commas, and parentheses for negative values.
     """
     if not val or pd.isna(val):
         return 0.0
     val_str = str(val).replace(",", "").replace("$", "").strip()
+    
+    # Handle accounting brackets: e.g. (120.00) -> -120.00
+    if val_str.startswith("(") and val_str.endswith(")"):
+        val_str = "-" + val_str[1:-1]
+        
     try:
         return float(val_str)
     except ValueError:
@@ -259,3 +276,124 @@ def reconcile_transaction(db: DBSession, household_id: int, tx_id: int) -> bool:
         
     db.commit()
     return True
+
+def parse_sms_transaction_text(text: str) -> dict | None:
+    """
+    SMS Regex Patterns for M-PAiSA & MyCash.
+    """
+    import re
+    text_clean = text.strip().replace("\n", " ")
+    
+    # 1. M-PAiSA payment made (Paid to ... of FJD ... on ...)
+    # e.g., "Receipt No: 987654321. Paid to Vodafone Fiji of FJD 50.00 on 09/06/2026 13:45."
+    # e.g., "Receipt No: 987654321. Paid to EFL of FJD 45.00 on 09/06/2026."
+    m_paid_of_re = re.search(
+        r"Paid\s+to\s+([^\s]+.*?)\s+of\s+(?:FJD|F\$)?\s*([\d\.]+)\s+on\s+([\d/-]+)", 
+        text_clean, re.IGNORECASE
+    )
+    
+    # 2. M-PAiSA payment standard (paid FJD ... to ... on ...)
+    # e.g., "M-PAiSA: You have paid FJD 15.50 to MH Supermarket on 09/06/2026. Ref: 123456789."
+    m_paid_re = re.search(
+        r"(?:paid|sent)\s+(?:FJD|F\$)?\s*([\d\.]+)\s+to\s+([^on\s]+.*?)\s+on\s+([\d/-]+)", 
+        text_clean, re.IGNORECASE
+    )
+    
+    # 3. M-PAiSA receipt (received FJD ... from ... on ...)
+    # e.g., "Receipt No: 456789012. You have received FJD 100.00 from John Doe on 09/06/2026 10:30."
+    m_recv_re = re.search(
+        r"received\s+(?:FJD|F\$)?\s*([\d\.]+)\s+from\s+([^on]+)\s+on\s+([\d/-]+)", 
+        text_clean, re.IGNORECASE
+    )
+    
+    amount = 0.0
+    merchant = ""
+    date_str = ""
+    ref = ""
+    is_income = False
+    
+    # Extract reference numbers
+    ref_match = re.search(r"(?:Ref|Receipt No|TXN):\s*([A-Za-z0-9]+)", text_clean, re.IGNORECASE)
+    if not ref_match:
+        ref_match = re.search(r"(?:Receipt No|Ref|TXN)\s*([A-Za-z0-9]+)", text_clean, re.IGNORECASE)
+    if ref_match:
+        ref = ref_match.group(1)
+        
+    if m_paid_of_re:
+        merchant = m_paid_of_re.group(1).strip()
+        amount = -float(m_paid_of_re.group(2))
+        date_str = m_paid_of_re.group(3).strip()
+    elif m_paid_re:
+        amount = -float(m_paid_re.group(1))
+        merchant = m_paid_re.group(2).strip()
+        date_str = m_paid_re.group(3).strip()
+    elif m_recv_re:
+        amount = float(m_recv_re.group(1))
+        merchant = f"Deposit: {m_recv_re.group(2).strip()}"
+        date_str = m_recv_re.group(3).strip()
+        is_income = True
+    else:
+        return None
+        
+    parsed_date = None
+    if date_str:
+        for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+            try:
+                parsed_date = datetime.datetime.strptime(date_str, fmt).date()
+                break
+            except ValueError:
+                continue
+    if not parsed_date:
+        parsed_date = datetime.date.today()
+        
+    return {
+        "amount": amount,
+        "description": merchant,
+        "transaction_date": parsed_date,
+        "reference": ref,
+        "is_income": is_income
+    }
+
+def import_sms_transaction(db: DBSession, household_id: int, sms_text: str) -> dict:
+    """
+    Parses a pasted M-PAiSA / MyCash transaction SMS and loads it into BankTransaction.
+    """
+    parsed = parse_sms_transaction_text(sms_text)
+    if not parsed:
+        return {"status": "error", "message": "Failed to parse SMS message format. Please check the text format."}
+        
+    date_val = parsed["transaction_date"]
+    desc_val = parsed["description"]
+    amount_val = parsed["amount"]
+    ref_val = parsed["reference"]
+    
+    # Check if identical record already exists in database
+    exists = db.query(BankTransaction).filter(
+        BankTransaction.household_id == household_id,
+        BankTransaction.transaction_date == date_val,
+        BankTransaction.amount == amount_val,
+        BankTransaction.description == desc_val
+    ).first()
+    
+    if exists:
+        return {"status": "warning", "message": f"Transaction already imported (Ref: {ref_val or 'N/A'})."}
+        
+    # Categorize
+    category_id = guess_category_by_description(desc_val, db, household_id)
+    
+    # Create the BankTransaction
+    tx = BankTransaction(
+        household_id=household_id,
+        account_bank="M-PAiSA / MyCash SMS",
+        transaction_date=date_val,
+        amount=amount_val,
+        description=desc_val,
+        reference=ref_val,
+        status="imported",
+        category_id=category_id
+    )
+    db.add(tx)
+    db.commit()
+    
+    return {"status": "success", "message": f"Successfully parsed: {desc_val} of FJD {abs(amount_val):.2f} (Ref: {ref_val or 'N/A'})."}
+

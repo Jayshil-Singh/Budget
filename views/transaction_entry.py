@@ -9,6 +9,14 @@ from config import INCOME_SOURCES
 from utils.helpers import format_currency
 from services.recurring_service import get_next_date
 
+# Static FX conversion rates → FJD (updated periodically, no external API needed)
+FX_TO_FJD = {
+    "FJD": 1.0,
+    "AUD": 1.54,
+    "NZD": 1.41,
+    "USD": 2.28,
+}
+
 
 def show_transaction_ledger(household_id: int):
     """
@@ -66,7 +74,9 @@ def show_transaction_ledger(household_id: int):
                     with st.form("add_expense_form"):
                         col1, col2 = st.columns(2)
                         with col1:
-                            amount = st.number_input("Amount", min_value=0.01, step=5.0)
+                            raw_amount = st.number_input("Amount", min_value=0.01, step=5.0)
+                            exp_currency = st.selectbox("Currency", list(FX_TO_FJD.keys()), index=0,
+                                                        help="Amount will be converted to FJD at current rates.")
                             category_name = st.selectbox("Category", cat_list, index=default_cat_idx)
                             date = st.date_input("Date", datetime.date.today())
                         with col2:
@@ -74,31 +84,41 @@ def show_transaction_ledger(household_id: int):
                             notes = st.text_area("Notes", placeholder="Extra details...")
                             is_recurring = st.checkbox("Is Recurring Bill?")
                             frequency = st.selectbox("Frequency", ["Weekly", "Fortnightly", "Monthly"], index=2) if is_recurring else None
-                            
+
                         submit_exp = st.form_submit_button("Log Expense", type="primary")
-                        
+
                         if submit_exp:
+                            fx_rate = FX_TO_FJD.get(exp_currency, 1.0)
+                            amount_fjd = round(raw_amount * fx_rate, 2)
+                            conversion_note = ""
+                            if exp_currency != "FJD":
+                                conversion_note = f"[Converted from {raw_amount:.2f} {exp_currency} @ rate {fx_rate}]"
+                            final_notes = (notes + "\n" + conversion_note).strip() if conversion_note else notes
+
                             # Find matching pay period
                             curr_period = db.query(PayPeriod).filter(
                                 PayPeriod.household_id == household_id,
                                 PayPeriod.start_date <= date,
                                 PayPeriod.end_date >= date
                             ).first()
-                            
+
                             exp = Expense(
                                 household_id=household_id,
                                 category_id=cat_choices[category_name],
-                                amount=amount,
+                                amount=amount_fjd,
                                 date=date,
                                 merchant=merchant,
-                                notes=notes,
+                                notes=final_notes,
                                 is_recurring=is_recurring,
                                 frequency=frequency.lower() if frequency else None,
                                 pay_period_id=curr_period.id if curr_period else None
                             )
                             db.add(exp)
                             db.commit()
-                            st.success("Expense logged successfully!")
+                            msg = f"Expense logged: FJD {amount_fjd:.2f}"
+                            if exp_currency != "FJD":
+                                msg += f" (converted from {raw_amount:.2f} {exp_currency})"
+                            st.success(msg)
                             st.rerun()
             
             # 2. Filter & List Expenses
@@ -165,34 +185,46 @@ def show_transaction_ledger(household_id: int):
                         col1, col2 = st.columns(2)
                         with col1:
                             inc_source_input = st.selectbox("Source", INCOME_SOURCES)
-                            inc_amount_input = st.number_input("Net Amount", min_value=0.01, step=50.0)
+                            inc_raw_amount = st.number_input("Net Amount", min_value=0.01, step=50.0)
+                            inc_currency = st.selectbox("Currency", list(FX_TO_FJD.keys()), index=0,
+                                                        help="Amount will be converted to FJD at current rates.")
                         with col2:
                             inc_date = st.date_input("Date Received", datetime.date.today())
                             inc_recurring = st.checkbox("Is Recurring Paycheck?")
                             inc_freq_input = st.selectbox("Pay Interval", ["Weekly", "Fortnightly", "Monthly"], index=1) if inc_recurring else None
-                            
+
                         submit_inc = st.form_submit_button("Log Income", type="primary")
-                        
+
                         if submit_inc:
+                            fx_rate = FX_TO_FJD.get(inc_currency, 1.0)
+                            inc_amount_fjd = round(inc_raw_amount * fx_rate, 2)
+                            inc_desc = ""
+                            if inc_currency != "FJD":
+                                inc_desc = f"Converted from {inc_raw_amount:.2f} {inc_currency} @ rate {fx_rate}"
+
                             curr_period = db.query(PayPeriod).filter(
                                 PayPeriod.household_id == household_id,
                                 PayPeriod.start_date <= inc_date,
                                 PayPeriod.end_date >= inc_date
                             ).first()
-                            
+
                             inc = Income(
                                 household_id=household_id,
                                 source=inc_source_input,
-                                amount=inc_amount_input,
+                                amount=inc_amount_fjd,
                                 date=inc_date,
                                 is_recurring=inc_recurring,
                                 frequency=inc_freq_input.lower() if inc_freq_input else None,
                                 next_date=get_next_date(inc_date, inc_freq_input) if inc_recurring else None,
-                                pay_period_id=curr_period.id if curr_period else None
+                                pay_period_id=curr_period.id if curr_period else None,
+                                description=inc_desc or None
                             )
                             db.add(inc)
                             db.commit()
-                            st.success("Income logged successfully!")
+                            msg = f"Income logged: FJD {inc_amount_fjd:.2f}"
+                            if inc_currency != "FJD":
+                                msg += f" (converted from {inc_raw_amount:.2f} {inc_currency})"
+                            st.success(msg)
                             st.rerun()
                         
             # 2. List Incomes

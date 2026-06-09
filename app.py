@@ -71,6 +71,38 @@ else:
                 post_recurring_transactions(db, membership.household_id)
             except Exception as e:
                 print(f"[RECURRING POST ERROR]: {e}")
+
+            # Proactive overdraft & burn-rate alert check
+            from services.forecast_service import get_bill_overdraft_warnings
+            from services.notification_service import create_notification
+            from models.audit import Notification
+            try:
+                overdraft_warnings = get_bill_overdraft_warnings(db, membership.household_id)
+                if overdraft_warnings:
+                    w = overdraft_warnings[0]
+                    warn_title = "⚠️ Cash Shortfall Predicted"
+                    warn_msg = (
+                        f"Your projected balance may drop to "
+                        f"{membership.household.currency} {w['balance']:.2f} "
+                        f"on {w['date'].strftime('%d %b %Y')}."
+                    )
+                    if w["events_that_day"]:
+                        warn_msg += f" Upcoming charges: {w['events_that_day']}."
+                    # Only create new notification if one doesn't already exist for today
+                    today_str = __import__("datetime").date.today().isoformat()
+                    duplicate = db.query(Notification).filter(
+                        Notification.household_id == membership.household_id,
+                        Notification.title == warn_title,
+                        Notification.is_read == False
+                    ).first()
+                    if not duplicate:
+                        create_notification(
+                            db, membership.household_id,
+                            warn_title, warn_msg,
+                            msg_type="warning", channel="in_app"
+                        )
+            except Exception as e:
+                print(f"[OVERDRAFT ALERT ERROR]: {e}")
         else:
             st.session_state["household_id"] = None
             

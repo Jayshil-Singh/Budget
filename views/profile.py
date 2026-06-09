@@ -107,16 +107,32 @@ def show_profile(user_id: int):
                         st.error("❌ Current password is incorrect.")
                     elif new_pwd != confirm_pwd:
                         st.error("❌ New passwords do not match.")
-                    elif len(new_pwd) < 8:
-                        st.error("❌ New password must be at least 8 characters long.")
                     else:
-                        reset_user_password(db, user_id, new_pwd, requester_id=user_id)
-                        send_email_notification(
-                            "SmartBudget AI – Password Changed",
-                            f"Hello {user.full_name},\n\nYour account password was changed successfully.\n\n"
-                            "If you did not make this change, contact your administrator immediately.\n\n"
-                            "Regards,\nSmartBudget AI",
-                            to_email=user.email
-                        )
-                        st.success("✅ Password updated successfully!")
-                        log_audit(db, user_id, "PASSWORD_SELF_CHANGED", f"User {user.email} changed own password")
+                        from utils.security import evaluate_password_strength
+                        strength_info = evaluate_password_strength(new_pwd)
+                        strength = strength_info["strength"]
+                        score = strength_info["score"]
+                        feedback = strength_info["feedback"]
+                        
+                        st.write("---")
+                        st.markdown(f"**Password Strength:** `{strength}`")
+                        st.progress(score / 100.0)
+                        
+                        if strength == "Weak":
+                            st.error("❌ Password is too weak. It must meet the following criteria:")
+                            for fb in feedback:
+                                st.markdown(f"- {fb}")
+                        else:
+                            reset_user_password(db, user_id, new_pwd, requester_id=user_id)
+                            send_email_notification(
+                                "SmartBudget AI – Password Changed",
+                                f"Hello {user.full_name},\n\nYour account password was changed successfully.\n\n"
+                                "If you did not make this change, contact your administrator immediately.\n\n"
+                                "Regards,\nSmartBudget AI",
+                                to_email=user.email
+                            )
+                            if strength == "Medium":
+                                st.warning("⚠️ Password updated, but it is of Medium strength. We recommend adding a special character for stronger security.")
+                            else:
+                                st.success("✅ Password updated successfully! (Strong security)")
+                            log_audit(db, user_id, "PASSWORD_SELF_CHANGED", f"User {user.email} changed own password (strength: {strength})")

@@ -1,7 +1,10 @@
 import streamlit as st
+import plotly.graph_objects as go
 from database import get_db
 from models.finance import ExpenseCategory
+from models.budget import Debt
 from services.ai_service import ask_budget_coach, analyze_affordability, detect_ai_anomalies, generate_ai_monthly_review
+from services.forecast_service import calculate_debt_payoff_forecast
 from utils.helpers import format_currency
 
 def show_ai_coach(household_id: int):
@@ -11,7 +14,7 @@ def show_ai_coach(household_id: int):
     st.markdown("<h1 class='app-title'>SmartBudget AI Coach</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Receive personalized strategies, reviews, and transaction affordability analytics</p>", unsafe_allow_html=True)
     
-    tab_chat, tab_afford, tab_review = st.tabs(["💬 AI Budget Coach", "🛍️ Can I Afford It?", "🔍 Monthly Reviews & Anomalies"])
+    tab_chat, tab_afford, tab_debt, tab_review = st.tabs(["💬 AI Budget Coach", "🛍️ Can I Afford It?", "📈 Debt Strategist", "🔍 Monthly Reviews & Anomalies"])
     
     with get_db() as db:
         # Load categories
@@ -100,6 +103,120 @@ def show_ai_coach(household_id: int):
                     st.markdown(f"Verdict: <span class='status-pill {style}'>{verdict}</span>", unsafe_allow_html=True)
                     st.write(f"Estimated payment per month: **{format_currency(res['monthly_payment'], st.session_state.get('household_currency', 'FJD'))}**")
                     st.info(explanation)
+
+        # ----------------------------------------------------
+        # DEBT PAYOFF STRATEGIST TAB
+        # ----------------------------------------------------
+        with tab_debt:
+            st.subheader("📈 AI Debt-Payoff Strategist")
+            st.write("Compare the **Snowball** (lowest balance first) vs **Avalanche** (highest interest first) strategies to find the optimal debt-payoff plan for your household.")
+
+            debts = db.query(Debt).filter(Debt.household_id == household_id, Debt.current_balance > 0).all()
+
+            if not debts:
+                st.info("🎉 No active debts found! Your household is debt-free.")
+            else:
+                # Summary cards
+                total_debt = sum(d.current_balance for d in debts)
+                total_min = sum(d.minimum_payment for d in debts)
+                currency = st.session_state.get("household_currency", "FJD")
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Outstanding Debt", format_currency(total_debt, currency))
+                m2.metric("Total Monthly Minimums", format_currency(total_min, currency))
+                m3.metric("Number of Active Debts", len(debts))
+
+                st.write("")
+                extra_payment = st.slider(
+                    "Extra Monthly Payment (on top of minimums)",
+                    min_value=0, max_value=2000, value=100, step=50,
+                    help="Adding extra payments dramatically reduces interest paid and payoff time."
+                )
+
+                with st.spinner("Calculating payoff schedules..."):
+                    result = calculate_debt_payoff_forecast(db, household_id, float(extra_payment))
+
+                sb = result.get("snowball", {})
+                av = result.get("avalanche", {})
+
+                if sb and av:
+                    # Side-by-side comparison metrics
+                    st.write("")
+                    st.subheader("📊 Strategy Comparison")
+                    col_s, col_a = st.columns(2)
+
+                    with col_s:
+                        with st.container(border=True):
+                            st.markdown("### ❄️ Debt Snowball")
+                            st.caption("Pay lowest balance first — builds momentum.")
+                            st.metric("Months to Pay Off", f"{sb['months_to_payoff']} months")
+                            st.metric("Total Interest Paid", format_currency(sb['total_interest_paid'], currency))
+                            if sb['months_to_payoff'] < av['months_to_payoff']:
+                                st.success("⚡ Faster payoff than Avalanche with this debt mix!")
+
+                    with col_a:
+                        with st.container(border=True):
+                            st.markdown("### 🏔️ Debt Avalanche")
+                            st.caption("Pay highest interest first — saves the most money.")
+                            st.metric("Months to Pay Off", f"{av['months_to_payoff']} months")
+                            st.metric("Total Interest Paid", format_currency(av['total_interest_paid'], currency))
+                            if av['total_interest_paid'] < sb['total_interest_paid']:
+                                st.success("💰 Saves more money than Snowball!")
+
+                    # Plotly payoff chart
+                    st.write("")
+                    st.subheader("📉 Remaining Balance Over Time")
+
+                    sb_schedule = sb.get("schedule", [])
+                    av_schedule = av.get("schedule", [])
+                    max_months = max(len(sb_schedule), len(av_schedule))
+
+                    if max_months > 0:
+                        sb_balance = [s["remaining_total"] for s in sb_schedule]
+                        av_balance = [s["remaining_total"] for s in av_schedule]
+                        months_axis = list(range(1, max_months + 1))
+
+                        # Pad shorter list
+                        while len(sb_balance) < max_months:
+                            sb_balance.append(0.0)
+                        while len(av_balance) < max_months:
+                            av_balance.append(0.0)
+
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=months_axis, y=sb_balance,
+                            name="Snowball", mode="lines",
+                            line=dict(color="rgba(46,213,115,0.9)", width=2.5)
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=months_axis, y=av_balance,
+                            name="Avalanche", mode="lines",
+                            line=dict(color="rgba(255,107,107,0.9)", width=2.5)
+                        ))
+                        fig.update_layout(
+                            height=300,
+                            xaxis_title="Month",
+                            yaxis_title=f"Balance ({currency})",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="white",
+                            font_family="Outfit",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                            xaxis=dict(showgrid=False),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                # AI-driven strategic advice
+                st.write("")
+                with st.expander("🤖 Ask AI for Personalized Debt Strategy", expanded=False):
+                    debt_names = ", ".join([f"{d.name} (FJD {d.current_balance:.0f} @ {d.interest_rate}%)" for d in debts])
+                    default_q = f"I have these debts: {debt_names}. Which payoff strategy suits me best and how can I pay them off faster?"
+                    debt_question = st.text_area("Your question:", value=default_q, height=80)
+                    if st.button("💬 Get AI Debt Advice", type="primary"):
+                        with st.spinner("Generating personalized strategy..."):
+                            advice = ask_budget_coach(db, household_id, debt_question)
+                        st.markdown(advice)
 
         # ----------------------------------------------------
         # MONTHLY REVIEWS & ANOMALIES TAB

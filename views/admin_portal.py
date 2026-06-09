@@ -49,25 +49,32 @@ def show_admin_portal(admin_user_id: int):
                         if not new_email or not new_name or not new_pwd:
                             st.error("Please fill in all fields.")
                         else:
-                            res = create_new_user(db, new_email, new_pwd, new_name, new_role)
-                            if res:
-                                email_subject = "Your SmartBudget AI Account Credentials"
-                                email_body = (
-                                    f"Hello {new_name},\n\n"
-                                    f"An administrator has created a SmartBudget AI account for you.\n\n"
-                                    f"Here are your login credentials:\n"
-                                    f"Email: {new_email}\n"
-                                    f"Password: {new_pwd}\n\n"
-                                    f"You can access the application here:\n"
-                                    f"https://smart-budget.streamlit.app/\n\n"
-                                    f"Regards,\n"
-                                    f"SmartBudget AI Team"
-                                )
-                                send_email_notification(email_subject, email_body, to_email=new_email)
-                                st.success(f"Registered user {new_name} as {new_role.upper()} successfully and sent credentials email!")
-                                st.rerun()
+                            from utils.security import evaluate_password_strength
+                            strength_info = evaluate_password_strength(new_pwd)
+                            if strength_info["strength"] == "Weak":
+                                st.error("❌ Password is too weak. It must meet the following criteria:")
+                                for fb in strength_info["feedback"]:
+                                    st.markdown(f"- {fb}")
                             else:
-                                st.error("Email is already registered.")
+                                res = create_new_user(db, new_email, new_pwd, new_name, new_role)
+                                if res:
+                                    email_subject = "Your SmartBudget AI Account Credentials"
+                                    email_body = (
+                                        f"Hello {new_name},\n\n"
+                                        f"An administrator has created a SmartBudget AI account for you.\n\n"
+                                        f"Here are your login credentials:\n"
+                                        f"Email: {new_email}\n"
+                                        f"Password: {new_pwd}\n\n"
+                                        f"You can access the application here:\n"
+                                        f"https://smart-budget.streamlit.app/\n\n"
+                                        f"Regards,\n"
+                                        f"SmartBudget AI Team"
+                                    )
+                                    send_email_notification(email_subject, email_body, to_email=new_email)
+                                    st.success(f"Registered user {new_name} as {new_role.upper()} successfully and sent credentials email!")
+                                    st.rerun()
+                                else:
+                                    st.error("Email is already registered.")
                                 
             # List users
             users = db.query(User).all()
@@ -136,20 +143,27 @@ def show_admin_portal(admin_user_id: int):
                             st.rerun()
                         elif action == "Force Reset Password":
                             if reset_pwd_val:
-                                reset_user_password(db, target_user.id, reset_pwd_val, admin_user_id)
-                                email_subject = "Your SmartBudget AI Password Reset"
-                                email_body = (
-                                    f"Hello {target_user.full_name},\n\n"
-                                    f"Your password has been reset by the platform administrator.\n\n"
-                                    f"New Password: {reset_pwd_val}\n"
-                                    f"Reason/Purpose: {action_purpose}\n\n"
-                                    f"Please log in at https://smart-budget.streamlit.app/ and update your password.\n\n"
-                                    f"Regards,\n"
-                                    f"SmartBudget AI Team"
-                                )
-                                send_email_notification(email_subject, email_body, to_email=target_user.email)
-                                st.success("Password updated and user notified via email!")
-                                st.rerun()
+                                from utils.security import evaluate_password_strength
+                                strength_info = evaluate_password_strength(reset_pwd_val)
+                                if strength_info["strength"] == "Weak":
+                                    st.error("❌ Password is too weak. It must meet the following criteria:")
+                                    for fb in strength_info["feedback"]:
+                                        st.markdown(f"- {fb}")
+                                else:
+                                    reset_user_password(db, target_user.id, reset_pwd_val, admin_user_id)
+                                    email_subject = "Your SmartBudget AI Password Reset"
+                                    email_body = (
+                                        f"Hello {target_user.full_name},\n\n"
+                                        f"Your password has been reset by the platform administrator.\n\n"
+                                        f"New Password: {reset_pwd_val}\n"
+                                        f"Reason/Purpose: {action_purpose}\n\n"
+                                        f"Please log in at https://smart-budget.streamlit.app/ and update your password.\n\n"
+                                        f"Regards,\n"
+                                        f"SmartBudget AI Team"
+                                    )
+                                    send_email_notification(email_subject, email_body, to_email=target_user.email)
+                                    st.success("Password updated and user notified via email!")
+                                    st.rerun()
                             else:
                                 st.error("Please provide the reset password value.")
                     else:
