@@ -43,6 +43,10 @@ def _clean_db_url(url_str: str) -> str:
         username = userinfo[:colon_idx]
         password = userinfo[colon_idx + 1:]
         
+    # Strip accidental surrounding brackets (e.g. [password]) commonly copied from templates
+    if password.startswith("[") and password.endswith("]"):
+        password = password[1:-1]
+        
     # URL-encode the password if it's not already encoded
     decoded_password = urllib.parse.unquote(password)
     encoded_password = urllib.parse.quote(decoded_password, safe="")
