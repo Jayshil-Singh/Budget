@@ -1,14 +1,66 @@
 import os
+import urllib.parse
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+def _clean_db_url(url_str: str) -> str:
+    if not url_str or not (url_str.startswith("postgresql://") or url_str.startswith("postgres://")):
+        return url_str
+        
+    # Find scheme separator
+    scheme_idx = url_str.find("://")
+    if scheme_idx == -1:
+        return url_str
+    scheme = url_str[:scheme_idx]
+    rest = url_str[scheme_idx + 3:]
+    
+    # Split authority (host/user) and path/query
+    slash_idx = rest.find("/")
+    if slash_idx != -1:
+        authority = rest[:slash_idx]
+        path_query = rest[slash_idx:]
+    else:
+        authority = rest
+        path_query = ""
+        
+    # Split userinfo and host/port at the last '@'
+    at_idx = authority.rfind("@")
+    if at_idx == -1:
+        return url_str # No '@', so no password or no host info, return as is
+        
+    userinfo = authority[:at_idx]
+    host_port = authority[at_idx + 1:]
+    
+    # Split username and password at the first ':'
+    colon_idx = userinfo.find(":")
+    if colon_idx == -1:
+        # No password, userinfo is just username
+        username = userinfo
+        password = ""
+    else:
+        username = userinfo[:colon_idx]
+        password = userinfo[colon_idx + 1:]
+        
+    # URL-encode the password if it's not already encoded
+    decoded_password = urllib.parse.unquote(password)
+    encoded_password = urllib.parse.quote(decoded_password, safe="")
+    
+    # Reconstruct the URL
+    if encoded_password:
+        new_authority = f"{username}:{encoded_password}@{host_port}"
+    else:
+        new_authority = f"{username}@{host_port}"
+        
+    return f"{scheme}://{new_authority}{path_query}"
 
 # Database Config
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///smartbudget.db")
 if DATABASE_URL.startswith("postgres://"):
     # Fix for SQLAlchemy compatibility with older postgres:// prefixes
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+DATABASE_URL = _clean_db_url(DATABASE_URL)
 
 # AI Service Config
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
