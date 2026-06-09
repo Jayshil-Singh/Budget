@@ -216,7 +216,16 @@ else:
         ]
             
         if st.session_state["user_role"] == "admin" or st.session_state.get("real_admin_user_id") is not None:
-            nav_options.append("Admin Portal")
+            nav_options.extend([
+                "👤 User Management",
+                "📈 Platform Stats",
+                "🏷️ Custom Categories",
+                "✉️ Email Logs",
+                "📜 Global System Logs",
+                "🛡️ Active Sessions",
+                "📢 Broadcast & Alerts",
+                "🗄️ Maintenance"
+            ])
             
         choice = st.sidebar.radio("Navigation Menu", nav_options)
         
@@ -262,6 +271,17 @@ else:
         except Exception as e:
             print(f"[SYSTEM BANNER ERROR]: {e}")
             
+        admin_choices = [
+            "👤 User Management",
+            "📈 Platform Stats",
+            "🏷️ Custom Categories",
+            "✉️ Email Logs",
+            "📜 Global System Logs",
+            "🛡️ Active Sessions",
+            "📢 Broadcast & Alerts",
+            "🗄️ Maintenance"
+        ]
+            
         if choice == "Dashboard":
             if not household_id:
                 st.warning("⚠️ **No Active Household**: To view the Dashboard, please join or create a household first via Collaboration & Invites or profile configuration.")
@@ -300,7 +320,6 @@ else:
         elif choice == "Collaboration & Invites":
             if not household_id:
                 st.warning("⚠️ **No Active Household**: Please enter a household context first.")
-                # We can still allow collaboration / invitations view or profile configuration to associate a household
                 show_collaboration(household_id)
             else:
                 show_collaboration(household_id)
@@ -316,7 +335,7 @@ else:
                 show_ai_coach(household_id)
         elif choice == "My Profile":
             show_profile(st.session_state["user_id"])
-        elif choice == "Admin Portal":
+        elif choice in admin_choices:
             if st.session_state.get("real_admin_user_id") is not None:
                 # Auto-exit Ghost Mode
                 real_admin_id = st.session_state["real_admin_user_id"]
@@ -345,7 +364,7 @@ else:
                             del st.session_state["household_name"]
                         if "household_currency" in st.session_state:
                             del st.session_state["household_currency"]
-                st.info("Exited Ghost Mode to access Admin Portal.")
+                st.info(f"Exited Ghost Mode to access {choice}.")
                 st.rerun()
             else:
-                show_admin_portal(st.session_state["user_id"])
+                show_admin_portal(st.session_state["user_id"], choice)

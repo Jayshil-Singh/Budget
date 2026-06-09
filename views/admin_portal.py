@@ -5,37 +5,31 @@ import os
 import json
 from database import get_db
 from models.auth import User, Session as UserSession
-from models.household import Household
+from models.household import Household, HouseholdMember
 from models.finance import Income, Expense, ExpenseCategory
 from models.audit import AuditLog, EmailLog
 from services.auth_service import create_new_user, disable_user, reset_user_password
 from services.notification_service import send_email_notification
 from config import EXPENSE_CATEGORIES
 
-def show_admin_portal(admin_user_id: int):
+def show_admin_portal(admin_user_id: int, active_choice: str):
     """
-    Renders the platform administration dashboard.
+    Renders the platform administration dashboard views based on sidebar choice.
     Exclusive to the 'admin' system role.
     """
-    st.markdown("<h1 class='app-title'>Platform Admin Portal</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='app-subtitle'>Manage global accounts, review system audits, and manage global settings</p>", unsafe_allow_html=True)
-    
     # Verify Admin Role
     if st.session_state.get("user_role") != "admin":
         st.error("Access Denied: You do not have permission to view the Admin Portal.")
         return
         
-    tab_users, tab_stats, tab_cats, tab_emails, tab_sys_audit, tab_sessions, tab_broadcast, tab_maintenance = st.tabs([
-        "👤 User Management", "📈 Platform Stats", "🏷️ Custom Categories", 
-        "✉️ Email Logs", "📜 Global System Logs", "🛡️ Active Sessions", 
-        "📢 Broadcast & Alerts", "🗄️ Maintenance"
-    ])
-    
     with get_db() as db:
         # ----------------------------------------------------
-        # USER MANAGEMENT TAB
+        # USER MANAGEMENT VIEW
         # ----------------------------------------------------
-        with tab_users:
+        if active_choice == "👤 User Management":
+            st.markdown("<h1 class='app-title'>👤 User Management</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Manage global user accounts, deactivate accounts, and update permissions</p>", unsafe_allow_html=True)
+            
             st.subheader("Manage Accounts")
             
             # Form to create user
@@ -240,9 +234,12 @@ def show_admin_portal(admin_user_id: int):
                                 st.warning("No changes detected.")
 
         # ----------------------------------------------------
-        # STATS TAB
+        # STATS VIEW
         # ----------------------------------------------------
-        with tab_stats:
+        elif active_choice == "📈 Platform Stats":
+            st.markdown("<h1 class='app-title'>📈 Platform Stats</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Monitor platform activity, households statistics, and total financial values</p>", unsafe_allow_html=True)
+            
             st.subheader("Platform Telemetry & Analytics")
             
             total_households = db.query(Household).count()
@@ -272,9 +269,12 @@ def show_admin_portal(admin_user_id: int):
             st.dataframe(pd.DataFrame(h_rows), use_container_width=True, hide_index=True)
 
         # ----------------------------------------------------
-        # CATEGORIES TAB
+        # CATEGORIES VIEW
         # ----------------------------------------------------
-        with tab_cats:
+        elif active_choice == "🏷️ Custom Categories":
+            st.markdown("<h1 class='app-title'>🏷️ Custom Categories</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Create and manage global expense categories</p>", unsafe_allow_html=True)
+            
             st.subheader("Manage System-wide Categories")
             
             # Add System Category
@@ -303,9 +303,12 @@ def show_admin_portal(admin_user_id: int):
                 st.write(f"- 🏷️ {c.name}")
 
         # ----------------------------------------------------
-        # EMAIL LOGS TAB (ENHANCED)
+        # EMAIL LOGS VIEW
         # ----------------------------------------------------
-        with tab_emails:
+        elif active_choice == "✉️ Email Logs":
+            st.markdown("<h1 class='app-title'>✉️ Email Logs</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Review and track automated email notifications sent by the system</p>", unsafe_allow_html=True)
+            
             st.subheader("System Email Logs")
             st.write("Search, filter, and export the automated emails sent by the platform:")
             
@@ -386,9 +389,12 @@ def show_admin_portal(admin_user_id: int):
                     )
 
         # ----------------------------------------------------
-        # GLOBAL SYSTEM LOGS TAB (ENHANCED)
+        # GLOBAL SYSTEM LOGS VIEW
         # ----------------------------------------------------
-        with tab_sys_audit:
+        elif active_choice == "📜 Global System Logs":
+            st.markdown("<h1 class='app-title'>📜 Global System Logs</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Search and export security audit trails and log streams</p>", unsafe_allow_html=True)
+            
             st.subheader("Global Security Audit Stream")
             st.write("Search, filter, and export administrative audit logs:")
             
@@ -462,9 +468,12 @@ def show_admin_portal(admin_user_id: int):
                     st.rerun()
 
         # ----------------------------------------------------
-        # ACTIVE SESSIONS TAB (NEW)
+        # ACTIVE SESSIONS VIEW
         # ----------------------------------------------------
-        with tab_sessions:
+        elif active_choice == "🛡️ Active Sessions":
+            st.markdown("<h1 class='app-title'>🛡️ Active Sessions</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>View active database sessions, revoke sessions, or enter ghost mode impersonation</p>", unsafe_allow_html=True)
+            
             st.subheader("🛡️ Active Sessions & Security Diagnostics")
             st.write("Live listing of active user database sessions. You can revoke any session to force-logout that user.")
             
@@ -556,9 +565,12 @@ def show_admin_portal(admin_user_id: int):
                             st.rerun()
 
         # ----------------------------------------------------
-        # BROADCAST & ALERTS TAB (NEW)
+        # BROADCAST & ALERTS VIEW
         # ----------------------------------------------------
-        with tab_broadcast:
+        elif active_choice == "📢 Broadcast & Alerts":
+            st.markdown("<h1 class='app-title'>📢 Broadcast & Alerts</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Configure global warning banners and dispatch email broadcasts</p>", unsafe_allow_html=True)
+            
             st.subheader("📢 Global System Broadcast Alerts & Banners")
             st.write("Configure a banner visible to all users at the top of every page of the application.")
             
@@ -614,9 +626,12 @@ def show_admin_portal(admin_user_id: int):
                             st.success(f"Successfully sent broadcast email to {count} active users!")
 
         # ----------------------------------------------------
-        # MAINTENANCE TAB (NEW)
+        # MAINTENANCE VIEW
         # ----------------------------------------------------
-        with tab_maintenance:
+        elif active_choice == "🗄️ Maintenance":
+            st.markdown("<h1 class='app-title'>🗄️ Maintenance</h1>", unsafe_allow_html=True)
+            st.markdown("<p class='app-subtitle'>Database backup downloads, index optimization vacuum, and storage log pruning</p>", unsafe_allow_html=True)
+            
             st.subheader("🗄️ Database Backup, Vacuum & Log Pruning")
             st.write("Administrative utilities for system upkeep and diagnostic optimization.")
             
