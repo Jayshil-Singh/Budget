@@ -41,6 +41,32 @@ def show_login_page():
                             st.session_state["user_email"] = user.email
                             st.session_state["user_name"] = user.full_name
                             st.session_state["user_role"] = user.role # admin, owner, partner, viewer
+                            
+                            # Resolve user IP and agent
+                            try:
+                                headers = st.context.headers
+                                ip_address = headers.get("x-forwarded-for", "127.0.0.1")
+                                user_agent = headers.get("user-agent", "Unknown")
+                            except Exception:
+                                try:
+                                    from streamlit.web.server.websocket_headers import _get_websocket_headers
+                                    headers = _get_websocket_headers()
+                                    ip_address = headers.get("X-Forwarded-For", "127.0.0.1")
+                                    user_agent = headers.get("User-Agent", "Unknown")
+                                except Exception:
+                                    ip_address = "127.0.0.1"
+                                    user_agent = "Unknown"
+                                    
+                            if user_agent and len(user_agent) > 200:
+                                user_agent = user_agent[:197] + "..."
+                                
+                            from utils.security import create_user_session
+                            try:
+                                s_record = create_user_session(db, user.id, ip_address=ip_address, user_agent=user_agent)
+                                st.session_state["session_token"] = s_record.session_token
+                            except Exception as e:
+                                print(f"[SESSION CREATE ERROR] {e}")
+                                
                             st.success(f"Welcome back, {user.full_name}!")
                             st.rerun()
                         else:

@@ -43,6 +43,10 @@ if "user_role" not in st.session_state:
     st.session_state["user_role"] = None
 if "household_id" not in st.session_state:
     st.session_state["household_id"] = None
+if "real_admin_user_id" not in st.session_state:
+    st.session_state["real_admin_user_id"] = None
+if "session_token" not in st.session_state:
+    st.session_state["session_token"] = None
     
 # ----------------------------------------------------
 # AUTHENTICATION ROUTER
@@ -53,6 +57,27 @@ if not st.session_state["logged_in"]:
     else:
         show_login_page()
 else:
+    # Validate session token in DB if it exists
+    token = st.session_state.get("session_token")
+    is_valid = True
+    if token:
+        from utils.security import validate_user_session
+        with get_db() as db:
+            session = validate_user_session(db, token)
+            if not session:
+                is_valid = False
+                
+    if not is_valid:
+        st.session_state["logged_in"] = False
+        st.session_state["user_id"] = None
+        st.session_state["user_name"] = None
+        st.session_state["user_role"] = None
+        st.session_state["household_id"] = None
+        st.session_state["real_admin_user_id"] = None
+        st.session_state["session_token"] = None
+        st.error("Your session has been revoked or expired. Please log in again.")
+        st.rerun()
+
     # Check household association
     user_id = st.session_state["user_id"]
     
@@ -123,6 +148,40 @@ else:
         # SIDEBAR NAVIGATION
         # ----------------------------------------------------
         st.sidebar.markdown(f"### SmartBudget AI")
+        
+        # Ghost Mode Banner (Must be above user role)
+        if st.session_state.get("real_admin_user_id") is not None:
+            st.sidebar.error("🎭 **GHOST MODE ACTIVE**\n\nViewing as another user")
+            if st.sidebar.button("🔴 Exit Ghost Mode", type="primary", use_container_width=True):
+                real_admin_id = st.session_state["real_admin_user_id"]
+                with get_db() as db:
+                    from services.auth_service import log_audit
+                    from models.auth import User
+                    admin_user = db.query(User).filter(User.id == real_admin_id).first()
+                    impersonated_user = db.query(User).filter(User.id == st.session_state["user_id"]).first()
+                    log_audit(db, real_admin_id, "ADMIN_GHOST_MODE_EXIT", f"Admin {admin_user.full_name if admin_user else real_admin_id} exited impersonation of user {impersonated_user.email if impersonated_user else st.session_state['user_id']}")
+                    
+                    st.session_state["user_id"] = real_admin_id
+                    st.session_state["real_admin_user_id"] = None
+                    if admin_user:
+                        st.session_state["user_email"] = admin_user.email
+                        st.session_state["user_name"] = admin_user.full_name
+                        st.session_state["user_role"] = admin_user.role
+                    membership = db.query(HouseholdMember).filter(HouseholdMember.user_id == real_admin_id).first()
+                    if membership:
+                        st.session_state["household_id"] = membership.household_id
+                        st.session_state["household_name"] = membership.household.name
+                        st.session_state["household_currency"] = membership.household.currency
+                        st.session_state["user_role"] = membership.role
+                    else:
+                        st.session_state["household_id"] = None
+                        if "household_name" in st.session_state:
+                            del st.session_state["household_name"]
+                        if "household_currency" in st.session_state:
+                            del st.session_state["household_currency"]
+                st.success("Exited Ghost Mode.")
+                st.rerun()
+
         st.sidebar.markdown(f"👤 User: **{st.session_state.get('user_name', 'Member')}**")
         st.sidebar.markdown(f"🛡️ Role: **{st.session_state.get('user_role', 'viewer').upper()}**")
         if st.session_state.get("household_id"):
@@ -158,24 +217,53 @@ else:
                 "My Profile"
             ])
             
-        if st.session_state["user_role"] == "admin":
+        if st.session_state["user_role"] == "admin" or st.session_state.get("real_admin_user_id") is not None:
             nav_options.append("Admin Portal")
             
         choice = st.sidebar.radio("Navigation Menu", nav_options)
         
         st.sidebar.markdown("---")
         if st.sidebar.button("Log Out", use_container_width=True, type="secondary"):
+            token = st.session_state.get("session_token")
+            if token:
+                from utils.security import destroy_user_session
+                with get_db() as db:
+                    destroy_user_session(db, token)
+                    
             st.session_state["logged_in"] = False
             st.session_state["user_id"] = None
             st.session_state["user_name"] = None
             st.session_state["user_role"] = None
             st.session_state["household_id"] = None
+            st.session_state["real_admin_user_id"] = None
+            st.session_state["session_token"] = None
             st.success("Logged out successfully.")
             st.rerun()
             
         # Dispatch to view
         household_id = st.session_state["household_id"]
         
+        # Display system banner if active
+        try:
+            import json
+            import os
+            if os.path.exists("system_banner.json"):
+                with open("system_banner.json", "r") as f:
+                    banner = json.load(f)
+                if banner.get("active") and banner.get("text"):
+                    b_type = banner.get("type", "info")
+                    b_text = banner.get("text")
+                    if b_type == "info":
+                        st.info(b_text)
+                    elif b_type == "warning":
+                        st.warning(b_text)
+                    elif b_type == "error":
+                        st.error(b_text)
+                    elif b_type == "success":
+                        st.success(b_text)
+        except Exception as e:
+            print(f"[SYSTEM BANNER ERROR]: {e}")
+            
         if choice == "Dashboard":
             show_dashboard(household_id)
         elif choice == "Financial Ledger":
@@ -199,4 +287,35 @@ else:
         elif choice == "My Profile":
             show_profile(st.session_state["user_id"])
         elif choice == "Admin Portal":
-            show_admin_portal(st.session_state["user_id"])
+            if st.session_state.get("real_admin_user_id") is not None:
+                # Auto-exit Ghost Mode
+                real_admin_id = st.session_state["real_admin_user_id"]
+                with get_db() as db:
+                    from services.auth_service import log_audit
+                    from models.auth import User
+                    admin_user = db.query(User).filter(User.id == real_admin_id).first()
+                    impersonated_user = db.query(User).filter(User.id == st.session_state["user_id"]).first()
+                    log_audit(db, real_admin_id, "ADMIN_GHOST_MODE_EXIT", f"Admin {admin_user.full_name if admin_user else real_admin_id} exited impersonation of user {impersonated_user.email if impersonated_user else st.session_state['user_id']}")
+                    
+                    st.session_state["user_id"] = real_admin_id
+                    st.session_state["real_admin_user_id"] = None
+                    if admin_user:
+                        st.session_state["user_email"] = admin_user.email
+                        st.session_state["user_name"] = admin_user.full_name
+                        st.session_state["user_role"] = admin_user.role
+                    membership = db.query(HouseholdMember).filter(HouseholdMember.user_id == real_admin_id).first()
+                    if membership:
+                        st.session_state["household_id"] = membership.household_id
+                        st.session_state["household_name"] = membership.household.name
+                        st.session_state["household_currency"] = membership.household.currency
+                        st.session_state["user_role"] = membership.role
+                    else:
+                        st.session_state["household_id"] = None
+                        if "household_name" in st.session_state:
+                            del st.session_state["household_name"]
+                        if "household_currency" in st.session_state:
+                            del st.session_state["household_currency"]
+                st.info("Exited Ghost Mode to access Admin Portal.")
+                st.rerun()
+            else:
+                show_admin_portal(st.session_state["user_id"])

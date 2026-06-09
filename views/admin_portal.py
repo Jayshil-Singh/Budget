@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
+import datetime
+import os
+import json
 from database import get_db
-from models.auth import User
+from models.auth import User, Session as UserSession
 from models.household import Household
 from models.finance import Income, Expense, ExpenseCategory
 from models.audit import AuditLog, EmailLog
@@ -22,8 +25,10 @@ def show_admin_portal(admin_user_id: int):
         st.error("Access Denied: You do not have permission to view the Admin Portal.")
         return
         
-    tab_users, tab_stats, tab_cats, tab_emails, tab_sys_audit = st.tabs([
-        "👤 User Management", "📈 Platform Stats", "🏷️ Custom Categories", "✉️ Email Logs", "📜 Global System Logs"
+    tab_users, tab_stats, tab_cats, tab_emails, tab_sys_audit, tab_sessions, tab_broadcast, tab_maintenance = st.tabs([
+        "👤 User Management", "📈 Platform Stats", "🏷️ Custom Categories", 
+        "✉️ Email Logs", "📜 Global System Logs", "🛡️ Active Sessions", 
+        "📢 Broadcast & Alerts", "🗄️ Maintenance"
     ])
     
     with get_db() as db:
@@ -88,7 +93,7 @@ def show_admin_portal(admin_user_id: int):
                     "Active": "Yes" if u.is_active else "No"
                 })
             df_users = pd.DataFrame(user_rows)
-            st.dataframe(df_users, width="stretch", hide_index=True)
+            st.dataframe(df_users, use_container_width=True, hide_index=True)
             
             # Disable / Enable / Password reset actions
             st.write("")
@@ -105,7 +110,7 @@ def show_admin_portal(admin_user_id: int):
                 
             action_purpose = st.text_area("Purpose of Action (This will be emailed to the user)", placeholder="Provide reason for deactivation, reactivation, or password reset...", key="action_purpose_val")
             
-            if st.button("Apply Account Action", type="secondary"):
+            if st.button("Apply Account Action", type="secondary", use_container_width=True):
                 if not action_purpose.strip():
                     st.error("Please provide the purpose/reason of the action.")
                 else:
@@ -242,7 +247,7 @@ def show_admin_portal(admin_user_id: int):
             
             total_households = db.query(Household).count()
             total_users = db.query(User).count()
-            total_inc_amount = db.query(Income).sum_amount = sum(i.amount for i in db.query(Income).all())
+            total_inc_amount = sum(i.amount for i in db.query(Income).all())
             total_exp_amount = sum(e.amount for e in db.query(Expense).all())
             
             col_k1, col_k2, col_k3, col_k4 = st.columns(4)
@@ -264,7 +269,7 @@ def show_admin_portal(admin_user_id: int):
                     "Budget Method": h.budget_method.upper(),
                     "Created At": h.created_at.strftime("%Y-%m-%d")
                 })
-            st.dataframe(pd.DataFrame(h_rows), width="stretch", hide_index=True)
+            st.dataframe(pd.DataFrame(h_rows), use_container_width=True, hide_index=True)
 
         # ----------------------------------------------------
         # CATEGORIES TAB
@@ -274,7 +279,7 @@ def show_admin_portal(admin_user_id: int):
             
             # Add System Category
             new_cat_name = st.text_input("New System Category Name", placeholder="e.g. Vacation Extra")
-            if st.button("Add Global Category", type="primary"):
+            if st.button("Add Global Category", type="primary", use_container_width=True):
                 if not new_cat_name:
                     st.error("Please enter a category name.")
                 else:
@@ -298,15 +303,40 @@ def show_admin_portal(admin_user_id: int):
                 st.write(f"- 🏷️ {c.name}")
 
         # ----------------------------------------------------
-        # EMAIL LOGS TAB
+        # EMAIL LOGS TAB (ENHANCED)
         # ----------------------------------------------------
         with tab_emails:
             st.subheader("System Email Logs")
-            st.write("Track the status of all automated emails sent by the platform:")
+            st.write("Search, filter, and export the automated emails sent by the platform:")
             
-            emails = db.query(EmailLog).order_by(EmailLog.timestamp.desc()).all()
+            # Filters in columns
+            col_ef1, col_ef2, col_ef3 = st.columns(3)
+            with col_ef1:
+                email_search = st.text_input("Search Recipient Email", key="email_search_val").strip()
+            with col_ef2:
+                status_filter = st.selectbox("Filter Status", ["All", "Success", "Failed", "Simulated", "Pending"], key="email_status_filter")
+            with col_ef3:
+                # Date Range Input
+                today_dt = datetime.date.today()
+                start_dt = today_dt - datetime.timedelta(days=90)
+                email_date_range = st.date_input("Date Range", value=(start_dt, today_dt), key="email_date_range")
+                
+            # Construct Query
+            query = db.query(EmailLog)
+            if email_search:
+                query = query.filter(EmailLog.recipient.contains(email_search.lower()))
+            if status_filter != "All":
+                query = query.filter(EmailLog.status.contains(status_filter))
+            if isinstance(email_date_range, tuple) and len(email_date_range) == 2:
+                s_date, e_date = email_date_range
+                s_dt = datetime.datetime.combine(s_date, datetime.time.min)
+                e_dt = datetime.datetime.combine(e_date, datetime.time.max)
+                query = query.filter(EmailLog.timestamp.between(s_dt, e_dt))
+                
+            emails = query.order_by(EmailLog.timestamp.desc()).all()
+            
             if not emails:
-                st.info("No email logs found.")
+                st.info("No matching email logs found.")
             else:
                 email_rows = []
                 for e in emails:
@@ -316,35 +346,336 @@ def show_admin_portal(admin_user_id: int):
                         "Recipient": e.recipient,
                         "Subject": e.subject,
                         "Status": e.status,
+                        "Body": e.body
+                    })
+                df_emails = pd.DataFrame(email_rows)
+                
+                # We show content snippet but keep full body in df for export
+                display_rows = []
+                for e in emails:
+                    display_rows.append({
+                        "ID": e.id,
+                        "Timestamp": e.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Recipient": e.recipient,
+                        "Subject": e.subject,
+                        "Status": e.status,
                         "Content Snippet": e.body[:100] + "..." if len(e.body) > 100 else e.body
                     })
-                st.dataframe(pd.DataFrame(email_rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+                
+                # Export Buttons in column layout
+                st.write("")
+                col_eex1, col_eex2 = st.columns(2)
+                with col_eex1:
+                    csv_data = df_emails.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Export Filtered Emails to CSV",
+                        data=csv_data,
+                        file_name=f"email_logs_{datetime.date.today()}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                with col_eex2:
+                    json_data = df_emails.to_json(orient="records", date_format="iso").encode('utf-8')
+                    st.download_button(
+                        label="📥 Export Filtered Emails to JSON",
+                        data=json_data,
+                        file_name=f"email_logs_{datetime.date.today()}.json",
+                        mime="application/json",
+                        use_container_width=True
+                    )
 
         # ----------------------------------------------------
-        # GLOBAL SYSTEM LOGS TAB
+        # GLOBAL SYSTEM LOGS TAB (ENHANCED)
         # ----------------------------------------------------
         with tab_sys_audit:
             st.subheader("Global Security Audit Stream")
+            st.write("Search, filter, and export administrative audit logs:")
             
-            global_logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(100).all()
+            col_as1, col_as2, col_as3 = st.columns(3)
+            with col_as1:
+                action_filter = st.text_input("Filter Action Keyword (e.g. USER_LOGIN)", key="audit_action_val").strip()
+            with col_as2:
+                user_id_filter = st.number_input("Filter User ID (0 for all)", min_value=0, step=1, key="audit_uid_val")
+            with col_as3:
+                # Date Range Input
+                today_dt = datetime.date.today()
+                start_dt = today_dt - datetime.timedelta(days=90)
+                audit_date_range = st.date_input("Date Range", value=(start_dt, today_dt), key="audit_date_range")
+                
+            query = db.query(AuditLog)
+            if action_filter:
+                query = query.filter(AuditLog.action.contains(action_filter.upper()))
+            if user_id_filter > 0:
+                query = query.filter(AuditLog.user_id == user_id_filter)
+            if isinstance(audit_date_range, tuple) and len(audit_date_range) == 2:
+                s_date, e_date = audit_date_range
+                s_dt = datetime.datetime.combine(s_date, datetime.time.min)
+                e_dt = datetime.datetime.combine(e_date, datetime.time.max)
+                query = query.filter(AuditLog.timestamp.between(s_dt, e_dt))
+                
+            global_logs = query.order_by(AuditLog.timestamp.desc()).all()
             
             if not global_logs:
-                st.info("No audit logs found.")
+                st.info("No matching audit logs found.")
             else:
                 g_log_rows = []
                 for l in global_logs:
                     g_log_rows.append({
                         "ID": l.id,
                         "Timestamp": l.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                        "User": l.user.email if l.user else "Anonymous/Failed Login",
+                        "User ID": l.user_id or "System",
+                        "User Email": l.user.email if l.user else "Anonymous/Failed Login",
                         "Action": l.action,
                         "Details": l.details or ""
                     })
-                st.dataframe(pd.DataFrame(g_log_rows), width="stretch", hide_index=True)
+                df_audit = pd.DataFrame(g_log_rows)
+                st.dataframe(df_audit, use_container_width=True, hide_index=True)
                 
-                # Clear Logs button
-                if st.button("Clear System Audit Logs", type="secondary"):
+                # Export and Clear Buttons
+                st.write("")
+                col_aud1, col_aud2 = st.columns(2)
+                with col_aud1:
+                    csv_data_aud = df_audit.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Export Filtered Audits to CSV",
+                        data=csv_data_aud,
+                        file_name=f"audit_logs_{datetime.date.today()}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                with col_aud2:
+                    json_data_aud = df_audit.to_json(orient="records", date_format="iso").encode('utf-8')
+                    st.download_button(
+                        label="📥 Export Filtered Audits to JSON",
+                        data=json_data_aud,
+                        file_name=f"audit_logs_{datetime.date.today()}.json",
+                        mime="application/json",
+                        use_container_width=True
+                    )
+                
+                st.write("")
+                if st.button("Clear System Audit Logs", type="secondary", use_container_width=True):
                     db.query(AuditLog).delete()
                     db.commit()
                     st.success("Audit logs cleared successfully!")
                     st.rerun()
+
+        # ----------------------------------------------------
+        # ACTIVE SESSIONS TAB (NEW)
+        # ----------------------------------------------------
+        with tab_sessions:
+            st.subheader("🛡️ Active Sessions & Security Diagnostics")
+            st.write("Live listing of active user database sessions. You can revoke any session to force-logout that user.")
+            
+            sessions = db.query(UserSession).order_by(UserSession.created_at.desc()).all()
+            if not sessions:
+                st.info("No active sessions found.")
+            else:
+                session_data = []
+                for s in sessions:
+                    is_active = s.expires_at > datetime.datetime.utcnow()
+                    session_data.append({
+                        "Session ID": s.id,
+                        "User Email": s.user.email if s.user else f"User ID {s.user_id}",
+                        "IP Address": s.ip_address or "Unknown",
+                        "User Agent": s.user_agent or "Unknown",
+                        "Created At": s.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Expires At": s.expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Token Snippet": s.session_token[:8] + "...",
+                        "Token": s.session_token,
+                        "Status": "Active" if is_active else "Expired"
+                    })
+                df_sessions = pd.DataFrame(session_data)
+                
+                # Display subset of columns for readability
+                display_cols = ["Session ID", "User Email", "IP Address", "Created At", "Expires At", "Token Snippet", "Status"]
+                st.dataframe(df_sessions[display_cols], use_container_width=True, hide_index=True)
+                
+                # Revoke Section
+                st.write("")
+                col_rev1, col_rev2 = st.columns([2, 1])
+                with col_rev1:
+                    session_to_revoke_token = st.selectbox(
+                        "Select Session to Revoke (by User - Token)",
+                        options=df_sessions["Token"].tolist(),
+                        format_func=lambda x: f"{df_sessions[df_sessions['Token']==x]['User Email'].values[0]} ({x[:8]}...)"
+                    )
+                with col_rev2:
+                    st.write("") # vertical offset
+                    if st.button("🚫 Revoke Selected Session", type="primary", use_container_width=True):
+                        from utils.security import destroy_user_session
+                        from services.auth_service import log_audit
+                        # Find session to audit-log the revoked user details
+                        rev_s = db.query(UserSession).filter(UserSession.session_token == session_to_revoke_token).first()
+                        rev_email = rev_s.user.email if (rev_s and rev_s.user) else "Unknown"
+                        
+                        success = destroy_user_session(db, session_to_revoke_token)
+                        if success:
+                            log_audit(db, admin_user_id, "ADMIN_SESSION_REVOKED", f"Admin revoked session for user {rev_email}")
+                            st.success(f"Session for user {rev_email} successfully revoked.")
+                            st.rerun()
+                        else:
+                            st.error("Failed to revoke session.")
+            
+            # Impersonation Section
+            st.write("---")
+            st.subheader("👥 Session Impersonation ('Ghost Mode')")
+            st.write("Temporarily view the household as a specific user to help troubleshoot. Impersonation of other admins is blocked for safety.")
+            
+            # Select user to impersonate
+            users_list = db.query(User).all()
+            user_opts = [u for u in users_list if u.id != admin_user_id]
+            
+            if not user_opts:
+                st.info("No other users available for impersonation.")
+            else:
+                col_imp1, col_imp2 = st.columns([2, 1])
+                with col_imp1:
+                    target_imp_user = st.selectbox(
+                        "Select User to Impersonate",
+                        options=user_opts,
+                        format_func=lambda u: f"{u.full_name} ({u.email}) - Role: {u.role.upper()}"
+                    )
+                with col_imp2:
+                    st.write("") # spacing
+                    if st.button("🎭 Start Impersonating", type="secondary", use_container_width=True):
+                        if target_imp_user.role == "admin":
+                            st.error("Safety Guard: Impersonating other administrators is not allowed.")
+                        else:
+                            from services.auth_service import log_audit
+                            log_audit(db, admin_user_id, "ADMIN_GHOST_MODE_ENTER", f"Admin entered impersonation of user {target_imp_user.email}")
+                            
+                            st.session_state["real_admin_user_id"] = admin_user_id
+                            st.session_state["user_id"] = target_imp_user.id
+                            st.session_state["user_email"] = target_imp_user.email
+                            st.session_state["user_name"] = target_imp_user.full_name
+                            st.session_state["user_role"] = target_imp_user.role
+                            
+                            st.success(f"Impersonating {target_imp_user.full_name}...")
+                            st.rerun()
+
+        # ----------------------------------------------------
+        # BROADCAST & ALERTS TAB (NEW)
+        # ----------------------------------------------------
+        with tab_broadcast:
+            st.subheader("📢 Global System Broadcast Alerts & Banners")
+            st.write("Configure a banner visible to all users at the top of every page of the application.")
+            
+            # Load current banner settings
+            current_banner = {"text": "", "type": "info", "active": False}
+            if os.path.exists("system_banner.json"):
+                try:
+                    with open("system_banner.json", "r") as f:
+                        current_banner = json.load(f)
+                except Exception:
+                    pass
+            
+            with st.form("broadcast_banner_form"):
+                banner_text = st.text_area("Banner Message Text", value=current_banner.get("text", ""), placeholder="e.g. System maintenance scheduled for Sunday at 2 AM.")
+                banner_type = st.selectbox("Alert Style Level", ["info", "warning", "error", "success"], index=["info", "warning", "error", "success"].index(current_banner.get("type", "info")))
+                banner_active = st.checkbox("Enable / Display Banner", value=current_banner.get("active", False))
+                
+                btn_save_banner = st.form_submit_button("Publish Global Banner", type="primary")
+                if btn_save_banner:
+                    try:
+                        with open("system_banner.json", "w") as f:
+                            json.dump({"text": banner_text, "type": banner_type, "active": banner_active}, f)
+                        st.success("Global banner settings saved and published!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to save banner settings: {e}")
+                        
+            st.write("---")
+            st.subheader("✉️ Mass Broadcast Email Blast")
+            st.write("Send an email notification to all active platform users. This uses the system email settings and logs audit footprints.")
+            
+            with st.form("broadcast_email_form"):
+                email_subject = st.text_input("Email Subject Line", placeholder="e.g. Important SmartBudget Account Update")
+                email_body = st.text_area("Email Content Body", placeholder="Write email message here...")
+                
+                btn_send_email = st.form_submit_button("🚀 Dispatch Broadcast Email to All Users", type="secondary")
+                if btn_send_email:
+                    if not email_subject or not email_body:
+                        st.error("Please provide both subject and body message.")
+                    else:
+                        active_users = db.query(User).filter(User.is_active == True).all()
+                        if not active_users:
+                            st.warning("No active users found to email.")
+                        else:
+                            count = 0
+                            for u in active_users:
+                                success = send_email_notification(email_subject, email_body, to_email=u.email)
+                                if success:
+                                    count += 1
+                            
+                            from services.auth_service import log_audit
+                            log_audit(db, admin_user_id, "ADMIN_EMAIL_BROADCAST", f"Admin sent broadcast email: '{email_subject}' to {count} users")
+                            st.success(f"Successfully sent broadcast email to {count} active users!")
+
+        # ----------------------------------------------------
+        # MAINTENANCE TAB (NEW)
+        # ----------------------------------------------------
+        with tab_maintenance:
+            st.subheader("🗄️ Database Backup, Vacuum & Log Pruning")
+            st.write("Administrative utilities for system upkeep and diagnostic optimization.")
+            
+            # DB Backup Download
+            st.write("### 1. Database Backup")
+            st.write("Download the live SQLite database file. Useful for manual snapshots and offline testing.")
+            try:
+                db_file_path = "smartbudget.db"
+                if os.path.exists(db_file_path):
+                    with open(db_file_path, "rb") as f:
+                        db_bytes = f.read()
+                    st.download_button(
+                        label="📥 Download Database Backup (sqlite)",
+                        data=db_bytes,
+                        file_name=f"smartbudget_backup_{datetime.date.today()}.db",
+                        mime="application/x-sqlite3",
+                        use_container_width=True
+                    )
+                else:
+                    st.error("Database file 'smartbudget.db' not found in root directory.")
+            except Exception as e:
+                st.error(f"Error reading database file: {e}")
+                
+            st.write("---")
+            
+            # SQL VACUUM
+            st.write("### 2. Run Database Vacuum")
+            st.write("Cleans unused database space, rebuilds the index, and reduces SQLite file size.")
+            if st.button("🧹 Optimize & Run SQL VACUUM", type="primary", use_container_width=True):
+                try:
+                    from database import engine
+                    with engine.raw_connection() as raw_conn:
+                        raw_conn.isolation_level = None
+                        cursor = raw_conn.cursor()
+                        cursor.execute("VACUUM")
+                    
+                    from services.auth_service import log_audit
+                    log_audit(db, admin_user_id, "ADMIN_DB_VACUUM", "Admin executed SQL VACUUM on database")
+                    st.success("SQL VACUUM executed successfully! Database defragmented.")
+                except Exception as e:
+                    st.error(f"Failed to run VACUUM command: {e}")
+                    
+            st.write("---")
+            
+            # Prune Logs
+            st.write("### 3. Database Maintenance: Prune Logs")
+            st.write("Bulk delete historical email and audit records to conserve storage space.")
+            days_to_keep = st.number_input("Days of logs to keep", min_value=1, value=30, step=1)
+            if st.button("🔥 Prune Historical Logs", type="secondary", use_container_width=True):
+                try:
+                    prune_date = datetime.datetime.utcnow() - datetime.timedelta(days=days_to_keep)
+                    
+                    # Log count before deletion
+                    num_audits_deleted = db.query(AuditLog).filter(AuditLog.timestamp < prune_date).delete()
+                    num_emails_deleted = db.query(EmailLog).filter(EmailLog.timestamp < prune_date).delete()
+                    db.commit()
+                    
+                    from services.auth_service import log_audit
+                    log_audit(db, admin_user_id, "ADMIN_LOGS_PRUNED", f"Admin pruned audit/email logs older than {days_to_keep} days. Deleted {num_audits_deleted} audit and {num_emails_deleted} email records.")
+                    st.success(f"Logs successfully pruned! Deleted {num_audits_deleted} audit logs and {num_emails_deleted} email logs older than {days_to_keep} days.")
+                except Exception as e:
+                    st.error(f"Failed to prune logs: {e}")
