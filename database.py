@@ -56,3 +56,10 @@ def init_db():
     import models.audit
     
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-seed the database if newly created
+    try:
+        from seed import seed_data
+        seed_data()
+    except Exception as e:
+        print(f"[AUTO-SEED] Skipping or failed: {e}")
