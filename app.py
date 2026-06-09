@@ -201,21 +201,19 @@ else:
         st.sidebar.markdown("---")
         
         # Build Navigation items
-        nav_options = []
-        if st.session_state["household_id"]:
-            nav_options.extend([
-                "Dashboard", 
-                "Financial Ledger", 
-                "Budgets & Sinking Funds",
-                "Savings & Debts", 
-                "Subscriptions Tracker", 
-                "Bank Import Portal", 
-                "Reports & Export",
-                "Collaboration & Invites",
-                "Financial Calendar",
-                "AI Budget Coach",
-                "My Profile"
-            ])
+        nav_options = [
+            "Dashboard", 
+            "Financial Ledger", 
+            "Budgets & Sinking Funds",
+            "Savings & Debts", 
+            "Subscriptions Tracker", 
+            "Bank Import Portal", 
+            "Reports & Export",
+            "Collaboration & Invites",
+            "Financial Calendar",
+            "AI Budget Coach",
+            "My Profile"
+        ]
             
         if st.session_state["user_role"] == "admin" or st.session_state.get("real_admin_user_id") is not None:
             nav_options.append("Admin Portal")
@@ -265,25 +263,57 @@ else:
             print(f"[SYSTEM BANNER ERROR]: {e}")
             
         if choice == "Dashboard":
-            show_dashboard(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To view the Dashboard, please join or create a household first via Collaboration & Invites or profile configuration.")
+            else:
+                show_dashboard(household_id)
         elif choice == "Financial Ledger":
-            show_transaction_ledger(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To view the Ledger, please join or create a household first.")
+            else:
+                show_transaction_ledger(household_id)
         elif choice == "Budgets & Sinking Funds":
-            show_budgeting(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To view Budgets, please join or create a household first.")
+            else:
+                show_budgeting(household_id)
         elif choice == "Savings & Debts":
-            show_savings_debt(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To view Savings & Debts, please join or create a household first.")
+            else:
+                show_savings_debt(household_id)
         elif choice == "Subscriptions Tracker":
-            show_subscriptions(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To track Subscriptions, please join or create a household first.")
+            else:
+                show_subscriptions(household_id)
         elif choice == "Bank Import Portal":
-            show_bank_import(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To import bank statements, please join or create a household first.")
+            else:
+                show_bank_import(household_id)
         elif choice == "Reports & Export":
-            show_reports(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To view Reports, please join or create a household first.")
+            else:
+                show_reports(household_id)
         elif choice == "Collaboration & Invites":
-            show_collaboration(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: Please enter a household context first.")
+                # We can still allow collaboration / invitations view or profile configuration to associate a household
+                show_collaboration(household_id)
+            else:
+                show_collaboration(household_id)
         elif choice == "Financial Calendar":
-            show_calendar(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To view the Financial Calendar, please join or create a household first.")
+            else:
+                show_calendar(household_id)
         elif choice == "AI Budget Coach":
-            show_ai_coach(household_id)
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: To talk with the AI Coach, please join or create a household first.")
+            else:
+                show_ai_coach(household_id)
         elif choice == "My Profile":
             show_profile(st.session_state["user_id"])
         elif choice == "Admin Portal":
