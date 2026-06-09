@@ -4,8 +4,11 @@ import pandas as pd
 from database import get_db
 from models.finance import Income, Expense, ExpenseCategory, PayPeriod
 from services.finance_service import get_current_pay_period
+from services.ai_service import auto_tag_category
 from config import INCOME_SOURCES
 from utils.helpers import format_currency
+from services.recurring_service import get_next_date
+
 
 def show_transaction_ledger(household_id: int):
     """
@@ -38,14 +41,36 @@ def show_transaction_ledger(household_id: int):
                 st.info("ℹ️ Read-Only Mode: Viewers cannot log expenses.")
             else:
                 with st.expander("➕ Log New Expense", expanded=False):
+                    # AI Auto-Tag helper (outside the form so it can interact)
+                    ai_tag_cols = st.columns([3, 1])
+                    with ai_tag_cols[0]:
+                        autotag_merchant = st.text_input("🤖 Type Merchant to Auto-Suggest Category",
+                                                          placeholder="e.g. Shell, MH Supermarket...",
+                                                          key="autotag_merchant_input")
+                    with ai_tag_cols[1]:
+                        st.write("")
+                        st.write("")
+                        if st.button("🔍 Suggest Category", key="btn_autotag"):
+                            if autotag_merchant:
+                                suggestion = auto_tag_category(autotag_merchant, list(cat_choices.keys()))
+                                if suggestion:
+                                    st.session_state["autotag_suggestion"] = suggestion
+                                    st.success(f"💡 Suggested: **{suggestion}**")
+                                else:
+                                    st.info("No category suggestion found. Please select manually.")
+
+                    suggested_cat = st.session_state.get("autotag_suggestion", None)
+                    cat_list = list(cat_choices.keys())
+                    default_cat_idx = cat_list.index(suggested_cat) if suggested_cat and suggested_cat in cat_list else 0
+
                     with st.form("add_expense_form"):
                         col1, col2 = st.columns(2)
                         with col1:
                             amount = st.number_input("Amount", min_value=0.01, step=5.0)
-                            category_name = st.selectbox("Category", list(cat_choices.keys()))
+                            category_name = st.selectbox("Category", cat_list, index=default_cat_idx)
                             date = st.date_input("Date", datetime.date.today())
                         with col2:
-                            merchant = st.text_input("Merchant", placeholder="e.g. MH Supermarket")
+                            merchant = st.text_input("Merchant", value=autotag_merchant or "", placeholder="e.g. MH Supermarket")
                             notes = st.text_area("Notes", placeholder="Extra details...")
                             is_recurring = st.checkbox("Is Recurring Bill?")
                             frequency = st.selectbox("Frequency", ["Weekly", "Fortnightly", "Monthly"], index=2) if is_recurring else None
@@ -162,7 +187,7 @@ def show_transaction_ledger(household_id: int):
                                 date=inc_date,
                                 is_recurring=inc_recurring,
                                 frequency=inc_freq_input.lower() if inc_freq_input else None,
-                                next_date=inc_date + datetime.timedelta(days=14) if inc_recurring and inc_freq_input == "Fortnightly" else None,
+                                next_date=get_next_date(inc_date, inc_freq_input) if inc_recurring else None,
                                 pay_period_id=curr_period.id if curr_period else None
                             )
                             db.add(inc)

@@ -87,6 +87,17 @@ def show_savings_debt(household_id: int):
                             st.write(f"### 🎯 {goal.name} (Priority: {goal.priority.upper()})")
                             st.progress(pct / 100)
                             st.write(f"Saved: **{format_currency(goal.current_amount, currency)}** of **{format_currency(goal.target_amount, currency)}** ({pct:.1f}%)")
+
+                            # Milestone alerts
+                            if goal.current_amount >= goal.target_amount:
+                                st.success("🏆 **Goal Achieved!** Congratulations on hitting your target!")
+                            elif pct >= 75:
+                                st.info("🎉 **75% Milestone Reached!** You're in the home stretch!")
+                            elif pct >= 50:
+                                st.info("🔥 **50% Milestone!** Halfway there — keep going!")
+                            elif pct >= 25:
+                                st.info("✨ **25% Milestone!** Great start — stay consistent!")
+
                         with c2:
                             st.write(f"📅 Target: **{goal.target_date.strftime('%d %b %Y')}**")
                             st.write(f"⏳ Days Left: **{days_left} days**")

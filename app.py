@@ -14,6 +14,9 @@ from views.bank_import import show_bank_import
 from views.collaboration import show_collaboration
 from views.ai_coach import show_ai_coach
 from views.admin_portal import show_admin_portal
+from views.profile import show_profile
+from views.reports import show_reports
+
 
 # Configure Streamlit page
 st.set_page_config(
@@ -61,6 +64,13 @@ else:
             st.session_state["household_name"] = membership.household.name
             st.session_state["household_currency"] = membership.household.currency
             st.session_state["user_role"] = membership.role # Override user role with household specific permissions
+            
+            # Run recurring transaction auto-posting check
+            from services.recurring_service import post_recurring_transactions
+            try:
+                post_recurring_transactions(db, membership.household_id)
+            except Exception as e:
+                print(f"[RECURRING POST ERROR]: {e}")
         else:
             st.session_state["household_id"] = None
             
@@ -77,6 +87,18 @@ else:
         st.sidebar.markdown(f"🛡️ Role: **{st.session_state.get('user_role', 'viewer').upper()}**")
         if st.session_state.get("household_id"):
             st.sidebar.markdown(f"🏠 Hub: **{st.session_state.get('household_name')}**")
+            
+            # Sidebar notification bell query
+            from models.audit import Notification
+            with get_db() as db:
+                unread_count = db.query(Notification).filter(
+                    Notification.household_id == st.session_state["household_id"],
+                    Notification.is_read == False
+                ).count()
+            if unread_count > 0:
+                st.sidebar.markdown(f"🔔 **{unread_count} Unread Notifications**")
+            else:
+                st.sidebar.markdown("🔔 No new notifications")
         st.sidebar.markdown("---")
         
         # Build Navigation items
@@ -89,9 +111,11 @@ else:
                 "Savings & Debts", 
                 "Subscriptions Tracker", 
                 "Bank Import Portal", 
+                "Reports & Export",
                 "Collaboration & Invites",
                 "Financial Calendar",
-                "AI Budget Coach"
+                "AI Budget Coach",
+                "My Profile"
             ])
             
         if st.session_state["user_role"] == "admin":
@@ -124,11 +148,15 @@ else:
             show_subscriptions(household_id)
         elif choice == "Bank Import Portal":
             show_bank_import(household_id)
+        elif choice == "Reports & Export":
+            show_reports(household_id)
         elif choice == "Collaboration & Invites":
             show_collaboration(household_id)
         elif choice == "Financial Calendar":
             show_calendar(household_id)
         elif choice == "AI Budget Coach":
             show_ai_coach(household_id)
+        elif choice == "My Profile":
+            show_profile(st.session_state["user_id"])
         elif choice == "Admin Portal":
             show_admin_portal(st.session_state["user_id"])

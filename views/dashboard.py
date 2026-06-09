@@ -4,8 +4,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from database import get_db
-from models.finance import Income, Expense, PayPeriod, ExpenseCategory
-from models.budget import Budget, SavingsGoal, Debt, SinkingFund
+from models.finance import Income, Expense, ExpenseCategory, PayPeriod
+from models.budget import Budget, BudgetItem, SavingsGoal, Debt, SinkingFund
+from models.audit import Notification
+from models.household import HouseholdMember
+from models.auth import User
 from services.finance_service import (
     get_current_pay_period, 
     calculate_financial_health_score, 
@@ -260,3 +263,219 @@ def show_dashboard(household_id: int):
                     st.plotly_chart(fig_line, use_container_width=True)
                 else:
                     st.info("Insufficient recurring data to generate forecast projections.")
+
+        # ----------------------------------------------------
+        # ROW 4: BUDGET VS ACTUAL & SPENDING TREND
+        # ----------------------------------------------------
+        st.write("")
+        row4_c1, row4_c2 = st.columns(2)
+
+        with row4_c1:
+            with st.container(border=True):
+                st.subheader("Budget vs Actual (Current Period)")
+                if current_period:
+                    # Get budget items for current period
+                    budget = db.query(Budget).filter(
+                        Budget.household_id == household_id,
+                        Budget.pay_period_id == current_period.id
+                    ).first()
+
+                    if budget and budget.items:
+                        bv_categories, bv_budgeted, bv_actual = [], [], []
+                        for item in budget.items:
+                            cat_name = item.category.name if item.category else "Other"
+                            actual_spend = sum(
+                                e.amount for e in db.query(Expense).filter(
+                                    Expense.household_id == household_id,
+                                    Expense.category_id == item.category_id,
+                                    Expense.date >= current_period.start_date,
+                                    Expense.date <= current_period.end_date
+                                ).all()
+                            )
+                            bv_categories.append(cat_name)
+                            bv_budgeted.append(item.limit_amount)
+                            bv_actual.append(actual_spend)
+
+                        fig_bva = go.Figure(data=[
+                            go.Bar(name="Budgeted", x=bv_categories, y=bv_budgeted,
+                                   marker_color="rgba(0, 201, 255, 0.7)"),
+                            go.Bar(name="Actual Spend", x=bv_categories, y=bv_actual,
+                                   marker_color="rgba(255, 82, 82, 0.7)")
+                        ])
+                        fig_bva.update_layout(
+                            barmode="group", height=280,
+                            margin=dict(l=10, r=10, t=10, b=10),
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="white", font_family="Outfit",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                            xaxis=dict(tickangle=-30, showgrid=False),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
+                        )
+                        st.plotly_chart(fig_bva, use_container_width=True)
+                    else:
+                        st.info("No budget items found for the current pay period. Set up a budget under Budgets & Sinking Funds.")
+                else:
+                    st.info("No active pay period found.")
+
+        with row4_c2:
+            with st.container(border=True):
+                st.subheader("6-Month Spending Trend")
+                today = datetime.date.today()
+                months_data = []
+                for i in range(5, -1, -1):
+                    # Calculate month start/end going 6 months back
+                    month_date = today.replace(day=1) - datetime.timedelta(days=i * 30)
+                    m_start = month_date.replace(day=1)
+                    # End of that month
+                    if m_start.month == 12:
+                        m_end = m_start.replace(year=m_start.year + 1, month=1, day=1) - datetime.timedelta(days=1)
+                    else:
+                        m_end = m_start.replace(month=m_start.month + 1, day=1) - datetime.timedelta(days=1)
+
+                    m_income = sum(
+                        inc.amount for inc in db.query(Income).filter(
+                            Income.household_id == household_id,
+                            Income.date >= m_start, Income.date <= m_end
+                        ).all()
+                    )
+                    m_expense = sum(
+                        exp.amount for exp in db.query(Expense).filter(
+                            Expense.household_id == household_id,
+                            Expense.date >= m_start, Expense.date <= m_end
+                        ).all()
+                    )
+                    months_data.append({
+                        "Month": m_start.strftime("%b %Y"),
+                        "Income": m_income,
+                        "Expenses": m_expense
+                    })
+
+                df_trend = pd.DataFrame(months_data)
+                if df_trend["Income"].sum() > 0 or df_trend["Expenses"].sum() > 0:
+                    fig_trend = go.Figure(data=[
+                        go.Bar(name="Income", x=df_trend["Month"], y=df_trend["Income"],
+                               marker_color="rgba(46, 213, 115, 0.75)"),
+                        go.Bar(name="Expenses", x=df_trend["Month"], y=df_trend["Expenses"],
+                               marker_color="rgba(255, 177, 66, 0.75)")
+                    ])
+                    fig_trend.update_layout(
+                        barmode="group", height=280,
+                        margin=dict(l=10, r=10, t=10, b=10),
+                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="white", font_family="Outfit",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                        xaxis=dict(showgrid=False),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    st.info("No income or expense data available for the last 6 months.")
+
+        # ----------------------------------------------------
+        # ROW 5: QUICK ADD EXPENSE & MEMBER SPENDING BREAKDOWN
+        # ----------------------------------------------------
+        st.write("")
+        row5_c1, row5_c2 = st.columns([1, 1])
+
+        with row5_c1:
+            with st.container(border=True):
+                st.subheader("⚡ Quick Add Expense")
+                role = st.session_state.get("user_role", "viewer")
+                if role == "viewer":
+                    st.info("Read-Only Mode: Viewers cannot log expenses.")
+                else:
+                    categories = db.query(ExpenseCategory).filter(
+                        (ExpenseCategory.household_id == household_id) | (ExpenseCategory.is_system == True)
+                    ).all()
+                    cat_choices = {c.name: c.id for c in categories}
+
+                    with st.form("quick_add_expense_form"):
+                        qa_cols = st.columns([2, 1])
+                        with qa_cols[0]:
+                            qa_merchant = st.text_input("Merchant / Description", placeholder="e.g. MH Supermarket")
+                        with qa_cols[1]:
+                            qa_amount = st.number_input("Amount", min_value=0.01, step=1.0, value=20.0)
+                        qa_category = st.selectbox("Category", list(cat_choices.keys()))
+                        qa_submit = st.form_submit_button("➕ Add Expense", type="primary", use_container_width=True)
+
+                        if qa_submit:
+                            today_date = datetime.date.today()
+                            curr_period = db.query(PayPeriod).filter(
+                                PayPeriod.household_id == household_id,
+                                PayPeriod.start_date <= today_date,
+                                PayPeriod.end_date >= today_date
+                            ).first()
+                            db.add(Expense(
+                                household_id=household_id,
+                                category_id=cat_choices[qa_category],
+                                amount=qa_amount,
+                                date=today_date,
+                                merchant=qa_merchant,
+                                pay_period_id=curr_period.id if curr_period else None
+                            ))
+                            db.commit()
+                            st.success(f"✅ {format_currency(qa_amount, currency)} added to {qa_category}!")
+                            st.rerun()
+
+        with row5_c2:
+            with st.container(border=True):
+                st.subheader("👥 Member Spending Breakdown")
+                # Get all household members
+                members = db.query(HouseholdMember).filter(
+                    HouseholdMember.household_id == household_id
+                ).all()
+                
+                # Note: Expenses don't have a logged_by user field currently.
+                # We show per-category this-month totals as a proxy and member roles.
+                if members:
+                    member_rows = []
+                    for m in members:
+                        user = m.user
+                        if user:
+                            member_rows.append({
+                                "Member": user.full_name,
+                                "Role": m.role.upper(),
+                                "Status": "✅ Active" if user.is_active else "❌ Inactive"
+                            })
+                    
+                    if member_rows:
+                        st.dataframe(pd.DataFrame(member_rows), hide_index=True, use_container_width=True)
+                    
+                    # Shared household this-month expenses
+                    m_start = today.replace(day=1) if "today" in dir() else datetime.date.today().replace(day=1)
+                    today_now = datetime.date.today()
+                    this_month_exp = sum(
+                        e.amount for e in db.query(Expense).filter(
+                            Expense.household_id == household_id,
+                            Expense.date >= today_now.replace(day=1),
+                            Expense.date <= today_now
+                        ).all()
+                    )
+                    st.metric("Household Spend This Month", format_currency(this_month_exp, currency))
+                else:
+                    st.info("No members found in this household.")
+
+        # ----------------------------------------------------
+        # ROW 6: IN-APP NOTIFICATIONS
+        # ----------------------------------------------------
+        unread_notifs = db.query(Notification).filter(
+            Notification.household_id == household_id,
+            Notification.is_read == False
+        ).order_by(Notification.sent_at.desc()).limit(5).all()
+
+        if unread_notifs:
+            st.write("")
+            with st.container(border=True):
+                st.subheader(f"🔔 Notifications ({len(unread_notifs)} unread)")
+                for notif in unread_notifs:
+                    icon = {"success": "✅", "warning": "⚠️", "info": "ℹ️", "alert": "🚨"}.get(notif.type, "🔔")
+                    with st.container():
+                        col_n1, col_n2 = st.columns([5, 1])
+                        with col_n1:
+                            st.write(f"{icon} **{notif.title}** — {notif.message}")
+                            st.caption(notif.sent_at.strftime("%d %b %Y %H:%M"))
+                        with col_n2:
+                            if st.button("Mark Read", key=f"notif_read_{notif.id}", type="secondary"):
+                                notif.is_read = True
+                                db.commit()
+                                st.rerun()

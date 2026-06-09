@@ -7,7 +7,43 @@ from models.audit import AIInsight
 import config
 from utils.helpers import format_currency
 
+def auto_tag_category(merchant: str, categories: list) -> str:
+    """
+    Suggests the best matching expense category based on the merchant/description name
+    using keyword matching. Returns the category name string.
+    """
+    merchant_lower = merchant.lower().strip()
+
+    # Keyword mapping for common Fiji/Pacific merchants and categories
+    keyword_map = {
+        "groceries": ["supermarket", "mh", "foodtown", "new world", "price right", "lotus", "jacks", "mom's", "grocery"],
+        "fuel": ["shell", "mobil", "bp", "pacific energy", "petrol", "fuel", "gas"],
+        "utilities": ["flf", "fiji electricity", "awt", "water", "power", "electricity", "utility", "telecom", "water authority"],
+        "transport": ["bus", "taxi", "uber", "transport", "cab", "ferry", "pacific transport", "fijibus"],
+        "healthcare": ["cwr", "colonialwar", "hospita", "clinic", "pharma", "chemist", "medical", "doctor", "dental", "health"],
+        "education": ["university", "school", "college", "fnu", "usp", "fees", "tuition", "books", "stationary"],
+        "dining": ["restaurant", "cafe", "pizza", "mcdonald", "kfc", "burger", "food court", "eatery", "dine"],
+        "entertainment": ["cinema", "fiji cinema", "netflix", "spotify", "disney", "game", "entertainment"],
+        "insurance": ["colonial", "anz insurance", "qbe", "sun insurance", "tower", "insurance", "life"],
+        "rent": ["rent", "lease", "apartment", "landlord", "accommodation", "housing"],
+        "internet": ["connect", "inkk", "digicel", "vodafone", "internet", "broadband", "data"],
+        "clothing": ["jacks of fiji", "rups", "court", "clothing", "fashion", "shoes", "apparel"],
+    }
+
+    for cat_keyword, keywords in keyword_map.items():
+        for kw in keywords:
+            if kw in merchant_lower:
+                # Find closest matching category from provided list
+                for cat_name in categories:
+                    if cat_keyword in cat_name.lower():
+                        return cat_name
+                break
+
+    return ""  # No suggestion found
+
+
 def get_financial_context(db: DBSession, household_id: int) -> dict:
+
     """
     Assembles a dictionary representation of the household's financial health
     to inject into the AI context.
