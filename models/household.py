@@ -31,6 +31,8 @@ class Household(Base):
     reports = relationship("Report", back_populates="household", cascade="all, delete-orphan")
     financial_scores = relationship("FinancialScore", back_populates="household", cascade="all, delete-orphan")
     ai_insights = relationship("AIInsight", back_populates="household", cascade="all, delete-orphan")
+    payment_due_dates = relationship("PaymentDueDate", back_populates="household", cascade="all, delete-orphan")
+
 
 class HouseholdMember(Base):
     __tablename__ = "household_members"

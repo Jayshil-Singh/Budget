@@ -72,6 +72,14 @@ else:
             except Exception as e:
                 print(f"[RECURRING POST ERROR]: {e}")
 
+            # Run payment due dates email check
+            from services.notification_service import check_due_date_email_notifications
+            try:
+                check_due_date_email_notifications(db, membership.household_id)
+            except Exception as e:
+                print(f"[DUE DATE NOTIFICATION ERROR]: {e}")
+
+
             # Proactive overdraft & burn-rate alert check
             from services.forecast_service import get_bill_overdraft_warnings
             from services.notification_service import create_notification

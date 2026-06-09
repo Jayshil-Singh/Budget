@@ -118,3 +118,21 @@ class BankTransaction(Base):
     
     # Relationships
     household = relationship("Household", back_populates="bank_transactions")
+
+
+class PaymentDueDate(Base):
+    __tablename__ = "payment_due_dates"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    household_id = Column(Integer, ForeignKey("households.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    due_date = Column(Date, nullable=False)
+    is_paid = Column(Boolean, default=False, nullable=False)
+    email_notified = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # Relationships
+    household = relationship("Household", back_populates="payment_due_dates")
+

@@ -1,7 +1,7 @@
 from models.base import Base
 from models.auth import User, Session
 from models.household import Household, HouseholdMember, Setting
-from models.finance import PayPeriod, ExpenseCategory, Income, Expense, Subscription, BankTransaction
+from models.finance import PayPeriod, ExpenseCategory, Income, Expense, Subscription, BankTransaction, PaymentDueDate
 from models.budget import Budget, BudgetItem, SinkingFund, SavingsGoal, Debt
 from models.audit import AuditLog, Notification, Report, FinancialScore, AIInsight, Attachment
 
@@ -18,6 +18,7 @@ __all__ = [
     "Expense",
     "Subscription",
     "BankTransaction",
+    "PaymentDueDate",
     "Budget",
     "BudgetItem",
     "SinkingFund",
