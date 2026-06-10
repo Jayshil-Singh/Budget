@@ -572,6 +572,26 @@ def show_budgeting(household_id: int):
                         if st.session_state.get(f"sel_fore_{item['id']}", True)
                     }
 
+                    # Extract template-level keys from checked items so recurring
+                    # expenses selected in the chosen month repeat across ALL months
+                    # in the cumulative range.
+                    #   "proj_exp_5_20260615" → template key "proj_exp_5"
+                    #   "proj_sub_3_20260701" → template key "proj_sub_3"
+                    #   "act_12"             → kept as-is (non-recurring, single month)
+                    #   "due_7"              → kept as-is (calendar due, single month)
+                    checked_rec_exp_templates = set()   # e.g. {"proj_exp_5", "proj_sub_3"}
+                    checked_act_ids = set()             # e.g. {"act_12"}
+                    for eid in checked_exp_ids:
+                        if eid.startswith("proj_exp_"):
+                            # proj_exp_{id}_{date} → proj_exp_{id}
+                            parts = eid.split("_")
+                            checked_rec_exp_templates.add("_".join(parts[:3]))  # proj_exp_5
+                        elif eid.startswith("proj_sub_"):
+                            parts = eid.split("_")
+                            checked_rec_exp_templates.add("_".join(parts[:3]))  # proj_sub_3
+                        else:
+                            checked_act_ids.add(eid)
+
                     # ── Month-by-month breakdown from today to end_range ──
                     import plotly.graph_objects as go
 
@@ -626,7 +646,7 @@ def show_budgeting(household_id: int):
 
                         m_total_inc = m_logged_inc + m_rec_inc
 
-                        # Expenses: logged (non-recurring) in range — only include if their id is checked
+                        # Expenses: logged (non-recurring) in range — only if checked
                         m_logged_exp = sum(
                             e.amount for e in db.query(Expense).filter(
                                 Expense.household_id == household_id,
@@ -634,23 +654,21 @@ def show_budgeting(household_id: int):
                                 Expense.date >= eff_start,
                                 Expense.date <= m_end
                             ).all()
-                            if f"act_{e.id}" in checked_exp_ids
+                            if f"act_{e.id}" in checked_act_ids
                         )
-                        # Expenses: recurring template occurrences — only if checked
+                        # Recurring expenses: include ALL occurrences if template is checked
                         m_rec_exp = 0.0
                         for t in all_rec_expenses:
-                            occ = get_occurrences_in_range(t.date, t.frequency, eff_start, m_end)
-                            for od in occ:
-                                exp_id = f"proj_exp_{t.id}_{od.strftime('%Y%m%d')}"
-                                if exp_id in checked_exp_ids:
-                                    m_rec_exp += t.amount
-                        # Subscriptions
+                            template_key = f"proj_exp_{t.id}"
+                            if template_key in checked_rec_exp_templates:
+                                occ = get_occurrences_in_range(t.date, t.frequency, eff_start, m_end)
+                                m_rec_exp += t.amount * len(occ)
+                        # Subscriptions: include ALL occurrences if template is checked
                         for sub in all_subs:
-                            occ = get_occurrences_in_range(sub.next_renewal, sub.frequency, eff_start, m_end)
-                            for od in occ:
-                                sub_id = f"proj_sub_{sub.id}_{od.strftime('%Y%m%d')}"
-                                if sub_id in checked_exp_ids:
-                                    m_rec_exp += sub.amount
+                            template_key = f"proj_sub_{sub.id}"
+                            if template_key in checked_rec_exp_templates:
+                                occ = get_occurrences_in_range(sub.next_renewal, sub.frequency, eff_start, m_end)
+                                m_rec_exp += sub.amount * len(occ)
 
                         m_total_exp = m_logged_exp + m_rec_exp
                         m_net = m_total_inc - m_total_exp
