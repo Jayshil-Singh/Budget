@@ -42,7 +42,7 @@ def show_budgeting(household_id: int):
                     value=datetime.date.today(),
                     help="Pick your next payday or the start of your current pay cycle."
                 )
-                gen_num = st.slider("Number of periods to generate", min_value=4, max_value=24, value=12, step=1)
+                gen_num = st.slider("Number of periods to generate", min_value=4, max_value=26, value=12, step=1)
 
                 if st.button("🗓️ Generate Pay Periods", type="primary"):
                     with get_db() as db_gen:
