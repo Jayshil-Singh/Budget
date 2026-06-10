@@ -107,6 +107,12 @@ def is_event_date_hit(start_date: datetime.date, frequency: str, target_date: da
         return target_date.day == start_date.day or (
             target_date.day == 28 and target_date.month == 2 and start_date.day > 28
         )
+    elif freq.startswith("custom:"):
+        try:
+            days = int(freq.split(":")[1].strip())
+            return diff_days % days == 0
+        except Exception:
+            pass
     return False
 
 def is_sub_date_hit(next_renewal: datetime.date, frequency: str, target_date: datetime.date) -> bool:

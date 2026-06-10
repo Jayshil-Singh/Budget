@@ -358,11 +358,29 @@ def show_pay_settings(household_id: int):
 
             def to_annual(amount: float, freq: str) -> float:
                 freq = (freq or "monthly").lower()
+                if freq.startswith("custom:"):
+                    try:
+                        days = int(freq.split(":")[1].strip())
+                        return amount * (365.0 / days)
+                    except Exception:
+                        pass
                 mapping = {
                     "weekly": 52, "fortnightly": 26, "monthly": 12,
                     "annual": 1, "yearly": 1, "payday": 26,
                 }
                 return amount * mapping.get(freq, 12)
+
+            def format_frequency(freq: str) -> str:
+                if not freq:
+                    return ""
+                freq_lower = freq.lower()
+                if freq_lower.startswith("custom:"):
+                    try:
+                        days = freq.split(":")[1].strip()
+                        return f"Every {days} Days"
+                    except Exception:
+                        pass
+                return freq.capitalize()
 
             annual_income = sum(to_annual(i.amount, i.frequency or pay_freq) for i in rec_incomes)
             annual_exp    = sum(to_annual(e.amount, e.frequency or budget_method) for e in rec_expenses)
@@ -406,7 +424,7 @@ def show_pay_settings(household_id: int):
                     ann = to_annual(i.amount, i.frequency or pay_freq)
                     inc_rows.append({
                         "Source":         i.source,
-                        "Frequency":      (i.frequency or pay_freq).capitalize(),
+                        "Frequency":      format_frequency(i.frequency or pay_freq),
                         f"Per Pay":       format_currency(i.amount, currency),
                         "Annual Total":   format_currency(ann, currency),
                     })
@@ -421,7 +439,7 @@ def show_pay_settings(household_id: int):
                     out_rows.append({
                         "Description":  e.merchant or "Recurring Expense",
                         "Type":         "Fixed Expense",
-                        "Frequency":    (e.frequency or budget_method).capitalize(),
+                        "Frequency":    format_frequency(e.frequency or budget_method),
                         "Per Occurrence": format_currency(e.amount, currency),
                         "Annual Total": format_currency(ann, currency),
                     })

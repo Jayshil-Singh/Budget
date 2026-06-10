@@ -71,21 +71,33 @@ def show_transaction_ledger(household_id: int):
                     cat_list = list(cat_choices.keys())
                     default_cat_idx = cat_list.index(suggested_cat) if suggested_cat and suggested_cat in cat_list else 0
 
-                    with st.form("add_expense_form"):
+                    is_recurring = st.checkbox("Is Recurring Bill?", key="new_exp_is_recurring")
+
+                    with st.container(border=True):
                         col1, col2 = st.columns(2)
                         with col1:
                             raw_amount = st.number_input("Amount", min_value=0.01, step=5.0)
                             exp_currency = st.selectbox("Currency", list(FX_TO_FJD.keys()), index=0,
                                                         help="Amount will be converted to FJD at current rates.")
                             category_name = st.selectbox("Category", cat_list, index=default_cat_idx)
-                            date = st.date_input("Date", datetime.date.today())
+                            if is_recurring:
+                                date = st.date_input("As of Date (Recurrence Start)", datetime.date.today(), key="new_exp_date_rec")
+                            else:
+                                date = st.date_input("Date", datetime.date.today(), key="new_exp_date_normal")
                         with col2:
                             merchant = st.text_input("Merchant", value=autotag_merchant or "", placeholder="e.g. MH Supermarket")
                             notes = st.text_area("Notes", placeholder="Extra details...")
-                            is_recurring = st.checkbox("Is Recurring Bill?")
-                            frequency = st.selectbox("Frequency", ["Weekly", "Fortnightly", "Monthly"], index=2) if is_recurring else None
+                            if is_recurring:
+                                frequency_choice = st.selectbox("Frequency", ["Weekly", "Fortnightly", "Monthly", "Custom"], index=2, key="new_exp_freq")
+                                if frequency_choice == "Custom":
+                                    custom_days = st.number_input("Every X Days", min_value=1, max_value=365, value=30, step=1, key="new_exp_custom_days")
+                                    frequency = f"custom:{custom_days}"
+                                else:
+                                    frequency = frequency_choice
+                            else:
+                                frequency = None
 
-                        submit_exp = st.form_submit_button("Log Expense", type="primary")
+                        submit_exp = st.button("Log Expense", type="primary")
 
                         if submit_exp:
                             fx_rate = FX_TO_FJD.get(exp_currency, 1.0)
@@ -173,25 +185,48 @@ def show_transaction_ledger(household_id: int):
                                     Expense.id == edit_id, Expense.household_id == household_id
                                 ).first()
                                 if edit_target:
-                                    with st.form("edit_expense_form"):
+                                    new_recurring = st.checkbox("Recurring?", value=bool(edit_target.is_recurring), key=f"edit_exp_rec_{edit_id}")
+
+                                    with st.container(border=True):
                                         st.caption(f"Editing Expense #{edit_id}")
                                         ec1, ec2 = st.columns(2)
                                         cat_list_e = list(cat_choices.keys())
                                         cur_cat = edit_target.category.name if edit_target.category else cat_list_e[0]
                                         cur_cat_idx = cat_list_e.index(cur_cat) if cur_cat in cat_list_e else 0
                                         with ec1:
-                                            new_amount = st.number_input("Amount (FJD)", min_value=0.01, value=float(edit_target.amount), step=5.0)
-                                            new_cat = st.selectbox("Category", cat_list_e, index=cur_cat_idx)
-                                            new_date = st.date_input("Date", value=edit_target.date)
+                                            new_amount = st.number_input("Amount (FJD)", min_value=0.01, value=float(edit_target.amount), step=5.0, key=f"edit_exp_amt_{edit_id}")
+                                            new_cat = st.selectbox("Category", cat_list_e, index=cur_cat_idx, key=f"edit_exp_cat_{edit_id}")
+                                            if new_recurring:
+                                                new_date = st.date_input("As of Date (Recurrence Start)", value=edit_target.date, key=f"edit_exp_date_{edit_id}")
+                                            else:
+                                                new_date = st.date_input("Date", value=edit_target.date, key=f"edit_exp_date_{edit_id}")
                                         with ec2:
-                                            new_merchant = st.text_input("Merchant", value=edit_target.merchant or "")
-                                            new_notes = st.text_area("Notes", value=edit_target.notes or "")
-                                            new_recurring = st.checkbox("Recurring?", value=bool(edit_target.is_recurring))
-                                            freq_opts = ["Weekly", "Fortnightly", "Monthly"]
-                                            cur_freq_idx = freq_opts.index(edit_target.frequency.capitalize()) if edit_target.frequency and edit_target.frequency.capitalize() in freq_opts else 2
-                                            new_freq = st.selectbox("Frequency", freq_opts, index=cur_freq_idx) if new_recurring else None
+                                            new_merchant = st.text_input("Merchant", value=edit_target.merchant or "", key=f"edit_exp_merch_{edit_id}")
+                                            new_notes = st.text_area("Notes", value=edit_target.notes or "", key=f"edit_exp_notes_{edit_id}")
+                                            if new_recurring:
+                                                freq_opts = ["Weekly", "Fortnightly", "Monthly", "Custom"]
+                                                cur_freq = edit_target.frequency or ""
+                                                if cur_freq.startswith("custom:"):
+                                                    cur_freq_idx = 3
+                                                else:
+                                                    cur_freq_cap = cur_freq.capitalize()
+                                                    cur_freq_idx = freq_opts.index(cur_freq_cap) if cur_freq_cap in freq_opts else 2
+                                                new_freq_choice = st.selectbox("Frequency", freq_opts, index=cur_freq_idx, key=f"edit_exp_freq_{edit_id}")
+                                                if new_freq_choice == "Custom":
+                                                    existing_days = 30
+                                                    if cur_freq.startswith("custom:"):
+                                                        try:
+                                                            existing_days = int(cur_freq.split(":")[1].strip())
+                                                        except Exception:
+                                                            pass
+                                                    new_custom_days = st.number_input("Every X Days", min_value=1, max_value=365, value=existing_days, step=1, key=f"edit_exp_custom_days_{edit_id}")
+                                                    new_freq = f"custom:{new_custom_days}"
+                                                else:
+                                                    new_freq = new_freq_choice
+                                            else:
+                                                new_freq = None
 
-                                        save_exp = st.form_submit_button("💾 Save Changes", type="primary")
+                                        save_exp = st.button("💾 Save Changes", type="primary", key=f"edit_exp_save_{edit_id}")
                                         if save_exp:
                                             edit_target.amount = new_amount
                                             edit_target.category_id = cat_choices[new_cat]
@@ -240,19 +275,31 @@ def show_transaction_ledger(household_id: int):
                 st.info("ℹ️ Read-Only Mode: Viewers cannot log income.")
             else:
                 with st.expander("➕ Log New Income", expanded=False):
-                    with st.form("add_income_form"):
+                    inc_recurring = st.checkbox("Is Recurring Paycheck?", key="new_inc_is_recurring")
+
+                    with st.container(border=True):
                         col1, col2 = st.columns(2)
                         with col1:
                             inc_source_input = st.selectbox("Source", INCOME_SOURCES)
                             inc_raw_amount = st.number_input("Net Amount", min_value=0.01, step=50.0)
                             inc_currency = st.selectbox("Currency", list(FX_TO_FJD.keys()), index=0,
                                                         help="Amount will be converted to FJD at current rates.")
+                            if inc_recurring:
+                                inc_date = st.date_input("As of Date (Recurrence Start)", datetime.date.today(), key="new_inc_date_rec")
+                            else:
+                                inc_date = st.date_input("Date Received", datetime.date.today(), key="new_inc_date_normal")
                         with col2:
-                            inc_date = st.date_input("Date Received", datetime.date.today())
-                            inc_recurring = st.checkbox("Is Recurring Paycheck?")
-                            inc_freq_input = st.selectbox("Pay Interval", ["Weekly", "Fortnightly", "Monthly"], index=1) if inc_recurring else None
+                            if inc_recurring:
+                                inc_freq_choice = st.selectbox("Pay Interval", ["Weekly", "Fortnightly", "Monthly", "Custom"], index=1, key="new_inc_freq")
+                                if inc_freq_choice == "Custom":
+                                    inc_custom_days = st.number_input("Every X Days", min_value=1, max_value=365, value=14, step=1, key="new_inc_custom_days")
+                                    inc_freq_input = f"custom:{inc_custom_days}"
+                                else:
+                                    inc_freq_input = inc_freq_choice
+                            else:
+                                inc_freq_input = None
 
-                        submit_inc = st.form_submit_button("Log Income", type="primary")
+                        submit_inc = st.button("Log Income", type="primary")
 
                         if submit_inc:
                             fx_rate = FX_TO_FJD.get(inc_currency, 1.0)
@@ -320,22 +367,45 @@ def show_transaction_ledger(household_id: int):
                                     Income.id == edit_inc_id, Income.household_id == household_id
                                 ).first()
                                 if edit_inc:
-                                    with st.form("edit_income_form"):
+                                    new_inc_recurring = st.checkbox("Recurring?", value=bool(edit_inc.is_recurring), key=f"edit_inc_rec_{edit_inc_id}")
+
+                                    with st.container(border=True):
                                         st.caption(f"Editing Income #{edit_inc_id}")
                                         ic1, ic2 = st.columns(2)
                                         cur_src_idx = INCOME_SOURCES.index(edit_inc.source) if edit_inc.source in INCOME_SOURCES else 0
                                         with ic1:
-                                            new_inc_source = st.selectbox("Source", INCOME_SOURCES, index=cur_src_idx)
-                                            new_inc_amount = st.number_input("Amount (FJD)", min_value=0.01, value=float(edit_inc.amount), step=50.0)
-                                            new_inc_date = st.date_input("Date", value=edit_inc.date)
+                                            new_inc_source = st.selectbox("Source", INCOME_SOURCES, index=cur_src_idx, key=f"edit_inc_source_{edit_inc_id}")
+                                            new_inc_amount = st.number_input("Amount (FJD)", min_value=0.01, value=float(edit_inc.amount), step=50.0, key=f"edit_inc_amount_{edit_inc_id}")
+                                            if new_inc_recurring:
+                                                new_inc_date = st.date_input("As of Date (Recurrence Start)", value=edit_inc.date, key=f"edit_inc_date_{edit_inc_id}")
+                                            else:
+                                                new_inc_date = st.date_input("Date", value=edit_inc.date, key=f"edit_inc_date_{edit_inc_id}")
                                         with ic2:
-                                            new_inc_recurring = st.checkbox("Recurring?", value=bool(edit_inc.is_recurring))
-                                            freq_opts_i = ["Weekly", "Fortnightly", "Monthly"]
-                                            cur_freq_i = freq_opts_i.index(edit_inc.frequency.capitalize()) if edit_inc.frequency and edit_inc.frequency.capitalize() in freq_opts_i else 1
-                                            new_inc_freq = st.selectbox("Frequency", freq_opts_i, index=cur_freq_i) if new_inc_recurring else None
-                                            new_inc_desc = st.text_area("Description / Notes", value=edit_inc.description or "")
+                                            if new_inc_recurring:
+                                                freq_opts_i = ["Weekly", "Fortnightly", "Monthly", "Custom"]
+                                                cur_freq_i_val = edit_inc.frequency or ""
+                                                if cur_freq_i_val.startswith("custom:"):
+                                                    cur_freq_i = 3
+                                                else:
+                                                    cur_freq_cap_i = cur_freq_i_val.capitalize()
+                                                    cur_freq_i = freq_opts_i.index(cur_freq_cap_i) if cur_freq_cap_i in freq_opts_i else 1
+                                                new_inc_freq_choice = st.selectbox("Frequency", freq_opts_i, index=cur_freq_i, key=f"edit_inc_freq_{edit_inc_id}")
+                                                if new_inc_freq_choice == "Custom":
+                                                    existing_days_i = 14
+                                                    if cur_freq_i_val.startswith("custom:"):
+                                                        try:
+                                                            existing_days_i = int(cur_freq_i_val.split(":")[1].strip())
+                                                        except Exception:
+                                                            pass
+                                                    new_inc_custom_days = st.number_input("Every X Days", min_value=1, max_value=365, value=existing_days_i, step=1, key=f"edit_inc_custom_days_{edit_inc_id}")
+                                                    new_inc_freq = f"custom:{new_inc_custom_days}"
+                                                else:
+                                                    new_inc_freq = new_inc_freq_choice
+                                            else:
+                                                new_inc_freq = None
+                                            new_inc_desc = st.text_area("Description / Notes", value=edit_inc.description or "", key=f"edit_inc_desc_{edit_inc_id}")
 
-                                        save_inc = st.form_submit_button("💾 Save Changes", type="primary")
+                                        save_inc = st.button("💾 Save Changes", type="primary", key=f"edit_inc_save_{edit_inc_id}")
                                         if save_inc:
                                             edit_inc.source = new_inc_source
                                             edit_inc.amount = new_inc_amount
@@ -343,6 +413,10 @@ def show_transaction_ledger(household_id: int):
                                             edit_inc.is_recurring = new_inc_recurring
                                             edit_inc.frequency = new_inc_freq.lower() if new_inc_freq else None
                                             edit_inc.description = new_inc_desc or None
+                                            if new_inc_recurring:
+                                                edit_inc.next_date = get_next_date(new_inc_date, new_inc_freq)
+                                            else:
+                                                edit_inc.next_date = None
                                             # Re-link pay period based on updated date
                                             updated_inc_period = db.query(PayPeriod).filter(
                                                 PayPeriod.household_id == household_id,

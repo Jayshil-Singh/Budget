@@ -40,6 +40,13 @@ def get_next_date(d: datetime.date, frequency: str) -> datetime.date:
         return add_month(d)
     elif freq in ["annual", "yearly"]:
         return add_year(d)
+    elif freq.startswith("custom:"):
+        try:
+            days = int(freq.split(":")[1].strip())
+            return d + datetime.timedelta(days=days)
+        except Exception:
+            pass
+        return d + datetime.timedelta(days=30)
     else:
         return d + datetime.timedelta(days=30) # default fallback
 
