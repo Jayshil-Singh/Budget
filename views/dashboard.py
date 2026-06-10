@@ -456,6 +456,13 @@ def show_dashboard(household_id: int):
         # ----------------------------------------------------
         # ROW 6: IN-APP NOTIFICATIONS
         # ----------------------------------------------------
+        def _mark_notif_read(notif_id):
+            """Callback: mark notification as read in its own db session."""
+            with get_db() as _db:
+                _n = _db.query(Notification).filter(Notification.id == notif_id).first()
+                if _n:
+                    _n.is_read = True
+
         unread_notifs = db.query(Notification).filter(
             Notification.household_id == household_id,
             Notification.is_read == False
@@ -473,10 +480,13 @@ def show_dashboard(household_id: int):
                             st.write(f"{icon} **{notif.title}** — {notif.message}")
                             st.caption(notif.sent_at.strftime("%d %b %Y %H:%M"))
                         with col_n2:
-                            if st.button("Mark Read", key=f"notif_read_{notif.id}", type="secondary"):
-                                notif.is_read = True
-                                db.commit()
-                                st.rerun()
+                            st.button(
+                                "Mark Read",
+                                key=f"notif_read_{notif.id}",
+                                type="secondary",
+                                on_click=_mark_notif_read,
+                                args=(notif.id,),
+                            )
 
         # ----------------------------------------------------
         # ROW 7: SAVINGS CHALLENGES WIDGET
