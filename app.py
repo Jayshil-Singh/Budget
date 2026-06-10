@@ -123,11 +123,14 @@ else:
                     if w["events_that_day"]:
                         warn_msg += f" Upcoming charges: {w['events_that_day']}."
                     # Only create new notification if one doesn't already exist for today
-                    today_str = __import__("datetime").date.today().isoformat()
+                    today_start = __import__("datetime").datetime.combine(
+                        __import__("datetime").date.today(),
+                        __import__("datetime").time.min,
+                    )
                     duplicate = db.query(Notification).filter(
                         Notification.household_id == membership.household_id,
                         Notification.title == warn_title,
-                        Notification.is_read == False
+                        Notification.sent_at >= today_start
                     ).first()
                     if not duplicate:
                         create_notification(
