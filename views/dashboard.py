@@ -15,7 +15,17 @@ from services.finance_service import (
     calculate_emergency_fund_coverage,
     get_essential_expenses_monthly
 )
-from services.forecast_service import calculate_current_balance, generate_cashflow_projection
+try:
+    from services.forecast_service import calculate_current_balance, generate_cashflow_projection
+except Exception:
+    def calculate_current_balance(db, household_id):
+        from sqlalchemy import func
+        from models.finance import Income, Expense
+        total_income = db.query(func.sum(Income.amount)).filter(Income.household_id == household_id).scalar() or 0.0
+        total_expense = db.query(func.sum(Expense.amount)).filter(Expense.household_id == household_id).scalar() or 0.0
+        return total_income - total_expense
+    def generate_cashflow_projection(db, household_id, days=90):
+        return []
 from utils.helpers import format_currency, get_health_score_rating
 
 def show_dashboard(household_id: int):

@@ -106,10 +106,10 @@ else:
 
 
             # Proactive overdraft & burn-rate alert check
-            from services.forecast_service import get_bill_overdraft_warnings
-            from services.notification_service import create_notification
-            from models.audit import Notification
             try:
+                from services.forecast_service import get_bill_overdraft_warnings
+                from services.notification_service import create_notification
+                from models.audit import Notification
                 overdraft_warnings = get_bill_overdraft_warnings(db, membership.household_id)
                 if overdraft_warnings:
                     w = overdraft_warnings[0]
