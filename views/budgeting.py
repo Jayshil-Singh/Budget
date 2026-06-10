@@ -4,9 +4,12 @@ import pandas as pd
 from database import get_db
 from models.finance import PayPeriod, ExpenseCategory, Expense
 from models.budget import Budget, BudgetItem, SinkingFund
+from models.household import Household
 from services.finance_service import get_current_pay_period, generate_pay_periods
 from config import SINKING_FUND_TYPES
 from utils.helpers import format_currency, get_days_remaining
+
+FREQ_PER_YEAR = {"weekly": 52, "fortnightly": 26, "monthly": 12, "payday": 26}
 
 def show_budgeting(household_id: int):
     """
@@ -27,48 +30,110 @@ def show_budgeting(household_id: int):
         
         current_period = get_current_pay_period(db, household_id)
         
+        # Load all periods for navigation
+        all_periods = db.query(PayPeriod).filter(
+            PayPeriod.household_id == household_id
+        ).order_by(PayPeriod.start_date.desc()).all()
+
+        hh = db.query(Household).filter(Household.id == household_id).first()
+        budget_method    = hh.budget_method if hh else "fortnightly"
+        periods_per_year = FREQ_PER_YEAR.get(budget_method, 26)
+        
         # ----------------------------------------------------
         # CYCLE BUDGETS TAB
         # ----------------------------------------------------
         with tab_bud:
-            if not current_period:
-                st.warning("⚠️ No active pay cycle found for today. Generate pay periods to get started.")
+            if not all_periods:
+                st.warning("⚠️ No pay periods found. Generate periods to get started.")
                 st.markdown("---")
                 st.subheader("📅 Generate Pay Periods")
-                st.write("Choose a start date (your next or most recent payday) and we'll generate the next 12 pay cycle periods automatically.")
-
+                st.write(
+                    f"Your budget method is **{budget_method.capitalize()}** "
+                    f"({periods_per_year} periods/year). Choose a start date and generate."
+                )
                 gen_start = st.date_input(
                     "Pay Period Start Date",
                     value=datetime.date.today(),
                     help="Pick your next payday or the start of your current pay cycle."
                 )
-                gen_num = st.slider("Number of periods to generate", min_value=4, max_value=26, value=12, step=1)
+                gen_num = st.slider(
+                    "Number of periods to generate",
+                    min_value=4, max_value=52,
+                    value=periods_per_year, step=1,
+                    help=f"{periods_per_year} = exactly 1 year of {budget_method} periods"
+                )
 
                 if st.button("🗓️ Generate Pay Periods", type="primary"):
                     with get_db() as db_gen:
                         new_periods = generate_pay_periods(db_gen, household_id, gen_start, num_periods=gen_num)
                     if new_periods:
-                        st.success(f"✅ {len(new_periods)} pay periods generated successfully! Refreshing...")
+                        st.success(f"✅ {len(new_periods)} pay periods generated! Refreshing...")
                         st.rerun()
                     else:
                         st.error("Failed to generate pay periods. Please check your household settings.")
 
             else:
-                st.subheader(f"Current Budget: {current_period.name}")
+                # ── Period Navigator ──────────────────────────────────────
+                period_map = {p.name: p for p in all_periods}
+                today = datetime.date.today()
+
+                nav_col1, nav_col2, nav_col3 = st.columns([4, 1, 1])
+                with nav_col1:
+                    default_name = current_period.name if current_period else list(period_map.keys())[0]
+                    default_idx  = list(period_map.keys()).index(default_name) \
+                                   if default_name in period_map else 0
+                    selected_period_name = st.selectbox(
+                        "📅 Browse Pay Period",
+                        list(period_map.keys()),
+                        index=default_idx,
+                        help="Switch between any past, active, or upcoming period.",
+                        key="bud_period_sel",
+                    )
+                with nav_col2:
+                    st.metric("Total Periods", len(all_periods))
+                with nav_col3:
+                    st.metric(f"{budget_method.capitalize()}/yr", periods_per_year)
+
+                selected_period = period_map[selected_period_name]
+                is_active_period = selected_period.start_date <= today <= selected_period.end_date
+                is_past_period   = selected_period.end_date < today
+
+                if is_active_period:
+                    days_left = (selected_period.end_date - today).days
+                    st.success(
+                        f"🟢 **Active Period** · "
+                        f"{selected_period.start_date.strftime('%d %b %Y')} – "
+                        f"{selected_period.end_date.strftime('%d %b %Y')} · "
+                        f"**{days_left} day(s) remaining**"
+                    )
+                elif is_past_period:
+                    st.info(
+                        f"📁 **Past Period** · "
+                        f"{selected_period.start_date.strftime('%d %b %Y')} – "
+                        f"{selected_period.end_date.strftime('%d %b %Y')}"
+                    )
+                else:
+                    st.warning(
+                        f"⏳ **Upcoming Period** · "
+                        f"{selected_period.start_date.strftime('%d %b %Y')} – "
+                        f"{selected_period.end_date.strftime('%d %b %Y')}"
+                    )
+
+                st.subheader(f"Budget: {selected_period.name}")
                 
-                # Fetch or create budget for the current pay period
+                # Fetch or create budget for the selected pay period
                 budget = db.query(Budget).filter(
                     Budget.household_id == household_id,
-                    Budget.pay_period_id == current_period.id
+                    Budget.pay_period_id == selected_period.id
                 ).first()
                 
                 if not budget:
-                    # Create placeholder budget
+                    # Create placeholder budget for the selected period
                     budget = Budget(
                         household_id=household_id,
-                        pay_period_id=current_period.id,
-                        name=f"Budget for {current_period.name}",
-                        total_limit=1000.0 # Default limit
+                        pay_period_id=selected_period.id,
+                        name=f"Budget for {selected_period.name}",
+                        total_limit=1000.0
                     )
                     db.add(budget)
                     db.commit()
@@ -125,16 +190,15 @@ def show_budgeting(household_id: int):
                     total_budgeted = 0.0
                     
                     for item in budget_items:
-                        # Calculate actual expenses in this period for this category
-                        actual = db.query(Expense).filter(
-                            Expense.household_id == household_id,
-                            Expense.category_id == item.category_id,
-                            Expense.pay_period_id == current_period.id
-                        ).sum_amount = sum(e.amount for e in db.query(Expense).filter(
-                            Expense.household_id == household_id,
-                            Expense.category_id == item.category_id,
-                            Expense.pay_period_id == current_period.id
-                        ).all())
+                        # Calculate actual expenses in the selected period for this category
+                        actual = sum(
+                            e.amount for e in db.query(Expense).filter(
+                                Expense.household_id == household_id,
+                                Expense.category_id == item.category_id,
+                                Expense.date >= selected_period.start_date,
+                                Expense.date <= selected_period.end_date,
+                            ).all()
+                        )
                         
                         variance = item.limit_amount - actual
                         status = "✅ OK"

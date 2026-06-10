@@ -16,6 +16,7 @@ from views.ai_coach import show_ai_coach
 from views.admin_portal import show_admin_portal
 from views.profile import show_profile
 from views.reports import show_reports
+from views.pay_settings import show_pay_settings
 
 
 # Configure Streamlit page
@@ -202,16 +203,17 @@ else:
         
         # Build Navigation items
         nav_options = [
-            "Dashboard", 
-            "Financial Ledger", 
+            "Dashboard",
+            "Financial Ledger",
             "Budgets & Sinking Funds",
-            "Savings & Debts", 
-            "Subscriptions Tracker", 
-            "Bank Import Portal", 
+            "Savings & Debts",
+            "Subscriptions Tracker",
+            "Bank Import Portal",
             "Reports & Export",
             "Collaboration & Invites",
             "Financial Calendar",
             "AI Budget Coach",
+            "⚙️ Pay & Budget Settings",
             "My Profile"
         ]
             
@@ -333,6 +335,11 @@ else:
                 st.warning("⚠️ **No Active Household**: To talk with the AI Coach, please join or create a household first.")
             else:
                 show_ai_coach(household_id)
+        elif choice == "⚙️ Pay & Budget Settings":
+            if not household_id:
+                st.warning("⚠️ **No Active Household**: Please join or create a household first.")
+            else:
+                show_pay_settings(household_id)
         elif choice == "My Profile":
             show_profile(st.session_state["user_id"])
         elif choice in admin_choices:
