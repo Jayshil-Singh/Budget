@@ -71,9 +71,8 @@ def show_transaction_ledger(household_id: int):
                     cat_list = list(cat_choices.keys())
                     default_cat_idx = cat_list.index(suggested_cat) if suggested_cat and suggested_cat in cat_list else 0
 
-                    is_recurring = st.checkbox("Is Recurring Bill?", key="new_exp_is_recurring")
-
                     with st.container(border=True):
+                        is_recurring = st.session_state.get("new_exp_is_recurring", False)
                         col1, col2 = st.columns(2)
                         with col1:
                             raw_amount = st.number_input("Amount", min_value=0.01, step=5.0)
@@ -87,6 +86,7 @@ def show_transaction_ledger(household_id: int):
                         with col2:
                             merchant = st.text_input("Merchant", value=autotag_merchant or "", placeholder="e.g. MH Supermarket")
                             notes = st.text_area("Notes", placeholder="Extra details...")
+                            is_recurring = st.checkbox("Is Recurring Bill?", value=is_recurring, key="new_exp_is_recurring")
                             if is_recurring:
                                 frequency_choice = st.selectbox("Frequency", ["Weekly", "Fortnightly", "Monthly", "Custom"], index=2, key="new_exp_freq")
                                 if frequency_choice == "Custom":
@@ -185,10 +185,13 @@ def show_transaction_ledger(household_id: int):
                                     Expense.id == edit_id, Expense.household_id == household_id
                                 ).first()
                                 if edit_target:
-                                    new_recurring = st.checkbox("Recurring?", value=bool(edit_target.is_recurring), key=f"edit_exp_rec_{edit_id}")
-
                                     with st.container(border=True):
                                         st.caption(f"Editing Expense #{edit_id}")
+                                        rec_key = f"edit_exp_rec_{edit_id}"
+                                        if rec_key not in st.session_state:
+                                            st.session_state[rec_key] = bool(edit_target.is_recurring)
+                                        new_recurring = st.session_state[rec_key]
+
                                         ec1, ec2 = st.columns(2)
                                         cat_list_e = list(cat_choices.keys())
                                         cur_cat = edit_target.category.name if edit_target.category else cat_list_e[0]
@@ -203,6 +206,7 @@ def show_transaction_ledger(household_id: int):
                                         with ec2:
                                             new_merchant = st.text_input("Merchant", value=edit_target.merchant or "", key=f"edit_exp_merch_{edit_id}")
                                             new_notes = st.text_area("Notes", value=edit_target.notes or "", key=f"edit_exp_notes_{edit_id}")
+                                            new_recurring = st.checkbox("Recurring?", value=new_recurring, key=rec_key)
                                             if new_recurring:
                                                 freq_opts = ["Weekly", "Fortnightly", "Monthly", "Custom"]
                                                 cur_freq = edit_target.frequency or ""
@@ -275,9 +279,8 @@ def show_transaction_ledger(household_id: int):
                 st.info("ℹ️ Read-Only Mode: Viewers cannot log income.")
             else:
                 with st.expander("➕ Log New Income", expanded=False):
-                    inc_recurring = st.checkbox("Is Recurring Paycheck?", key="new_inc_is_recurring")
-
                     with st.container(border=True):
+                        inc_recurring = st.session_state.get("new_inc_is_recurring", False)
                         col1, col2 = st.columns(2)
                         with col1:
                             inc_source_input = st.selectbox("Source", INCOME_SOURCES)
@@ -289,6 +292,7 @@ def show_transaction_ledger(household_id: int):
                             else:
                                 inc_date = st.date_input("Date Received", datetime.date.today(), key="new_inc_date_normal")
                         with col2:
+                            inc_recurring = st.checkbox("Is Recurring Paycheck?", value=inc_recurring, key="new_inc_is_recurring")
                             if inc_recurring:
                                 inc_freq_choice = st.selectbox("Pay Interval", ["Weekly", "Fortnightly", "Monthly", "Custom"], index=1, key="new_inc_freq")
                                 if inc_freq_choice == "Custom":
@@ -367,10 +371,13 @@ def show_transaction_ledger(household_id: int):
                                     Income.id == edit_inc_id, Income.household_id == household_id
                                 ).first()
                                 if edit_inc:
-                                    new_inc_recurring = st.checkbox("Recurring?", value=bool(edit_inc.is_recurring), key=f"edit_inc_rec_{edit_inc_id}")
-
                                     with st.container(border=True):
                                         st.caption(f"Editing Income #{edit_inc_id}")
+                                        inc_rec_key = f"edit_inc_rec_{edit_inc_id}"
+                                        if inc_rec_key not in st.session_state:
+                                            st.session_state[inc_rec_key] = bool(edit_inc.is_recurring)
+                                        new_inc_recurring = st.session_state[inc_rec_key]
+
                                         ic1, ic2 = st.columns(2)
                                         cur_src_idx = INCOME_SOURCES.index(edit_inc.source) if edit_inc.source in INCOME_SOURCES else 0
                                         with ic1:
@@ -381,6 +388,7 @@ def show_transaction_ledger(household_id: int):
                                             else:
                                                 new_inc_date = st.date_input("Date", value=edit_inc.date, key=f"edit_inc_date_{edit_inc_id}")
                                         with ic2:
+                                            new_inc_recurring = st.checkbox("Recurring?", value=new_inc_recurring, key=inc_rec_key)
                                             if new_inc_recurring:
                                                 freq_opts_i = ["Weekly", "Fortnightly", "Monthly", "Custom"]
                                                 cur_freq_i_val = edit_inc.frequency or ""
