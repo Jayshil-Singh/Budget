@@ -1,11 +1,12 @@
 import streamlit as st
 import datetime
+import calendar
 import pandas as pd
 from database import get_db
-from models.finance import PayPeriod, ExpenseCategory, Expense
+from models.finance import PayPeriod, ExpenseCategory, Expense, Income, Subscription
 from models.budget import Budget, BudgetItem, SinkingFund
 from models.household import Household
-from services.finance_service import get_current_pay_period, generate_pay_periods
+from services.finance_service import get_current_pay_period, generate_pay_periods, calculate_income_for_period, calculate_expenses_for_period
 from config import SINKING_FUND_TYPES
 from utils.helpers import format_currency, get_days_remaining
 
@@ -18,7 +19,7 @@ def show_budgeting(household_id: int):
     st.markdown("<h1 class='app-title'>Budgets & Sinking Funds</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Set targets, check variance, and compile sinking reserve goals</p>", unsafe_allow_html=True)
     
-    tab_bud, tab_sink = st.tabs(["📊 Cycle Budgets", "🏺 Sinking Funds"])
+    tab_bud, tab_sink, tab_forecast = st.tabs(["📊 Cycle Budgets", "🏺 Sinking Funds", "🔮 Interactive Forecaster"])
     currency = st.session_state.get("household_currency", "FJD")
     
     with get_db() as db:
@@ -190,14 +191,10 @@ def show_budgeting(household_id: int):
                     total_budgeted = 0.0
                     
                     for item in budget_items:
-                        # Calculate actual expenses in the selected period for this category
-                        actual = sum(
-                            e.amount for e in db.query(Expense).filter(
-                                Expense.household_id == household_id,
-                                Expense.category_id == item.category_id,
-                                Expense.date >= selected_period.start_date,
-                                Expense.date <= selected_period.end_date,
-                            ).all()
+                        actual = calculate_expenses_for_period(
+                            db, household_id,
+                            selected_period.start_date, selected_period.end_date,
+                            category_id=item.category_id
                         )
                         
                         variance = item.limit_amount - actual
@@ -315,3 +312,244 @@ def show_budgeting(household_id: int):
                                 db.commit()
                                 st.success("Sinking Fund deleted!")
                                 st.rerun()
+
+        # ══════════════════════════════════════════════════════
+        # TAB 3 – INTERACTIVE FORECASTER
+        # ══════════════════════════════════════════════════════
+        with tab_forecast:
+            st.subheader("🔮 Interactive Savings & Cashflow Forecaster")
+            st.markdown(
+                "This tool helps you project your exact savings by grouping actual and recurring "
+                "transactions. You can toggle between a full calendar month or a single pay cycle, "
+                "and select which bills to include in your surplus projection."
+            )
+            
+            # Helper to get occurrences
+            def get_occurrences_in_range(start_date, frequency, range_start, range_end):
+                occurrences = []
+                if not start_date or not frequency:
+                    return occurrences
+                curr = start_date
+                iterations = 0
+                while curr <= range_end and iterations < 200:
+                    if curr >= range_start:
+                        occurrences.append(curr)
+                    from services.recurring_service import get_next_date
+                    next_dt = get_next_date(curr, frequency)
+                    if next_dt <= curr:
+                        break
+                    curr = next_dt
+                    iterations += 1
+                return occurrences
+
+            # Choose forecast mode
+            forecast_mode = st.radio(
+                "Forecast Range Mode",
+                ["📅 Full Calendar Month", "🕒 Selected Pay Cycle Period"],
+                horizontal=True,
+                key="fore_mode_radio"
+            )
+            
+            today_date = datetime.date.today()
+            
+            if forecast_mode == "📅 Full Calendar Month":
+                months = [calendar.month_name[i] for i in range(1, 13)]
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    sel_m_name = st.selectbox("Forecast Month", months, index=today_date.month - 1, key="fore_month_sel")
+                    sel_m = months.index(sel_m_name) + 1
+                with col_m2:
+                    sel_y = st.selectbox("Forecast Year", range(today_date.year - 1, today_date.year + 2), index=1, key="fore_year_sel")
+                
+                start_range = datetime.date(sel_y, sel_m, 1)
+                last_day = calendar.monthrange(sel_y, sel_m)[1]
+                end_range = datetime.date(sel_y, sel_m, last_day)
+                st.info(f"Targeting: **{start_range.strftime('%B %Y')}** ({start_range.strftime('%d %b %Y')} – {end_range.strftime('%d %b %Y')})")
+            else:
+                # Use navigated selected period
+                if 'selected_period' in locals() and selected_period:
+                    start_range = selected_period.start_date
+                    end_range = selected_period.end_date
+                    st.info(f"Targeting Pay Cycle: **{selected_period.name}** ({start_range.strftime('%d %b %Y')} – {end_range.strftime('%d %b %Y')})")
+                else:
+                    # Fallback if no pay period selected or available
+                    st.warning("Please navigate to a valid pay period in the 'Cycle Budgets' tab.")
+                    start_range = today_date
+                    end_range = today_date + datetime.timedelta(days=14)
+
+            # Fetch Incomes
+            # 1. Actual
+            actual_incomes = db.query(Income).filter(
+                Income.household_id == household_id,
+                Income.is_recurring == False,
+                Income.date >= start_range,
+                Income.date <= end_range
+            ).all()
+            
+            # 2. Recurring templates
+            recurring_incomes = db.query(Income).filter(
+                Income.household_id == household_id,
+                Income.is_recurring == True
+            ).all()
+            
+            income_items = []
+            for i in actual_incomes:
+                income_items.append({
+                    "name": f"💰 {i.source} (Logged)",
+                    "amount": i.amount,
+                    "date": i.date,
+                    "type": "Logged"
+                })
+            for template in recurring_incomes:
+                occ_dates = get_occurrences_in_range(template.date, template.frequency, start_range, end_range)
+                for od in occ_dates:
+                    if od > today_date:
+                        income_items.append({
+                            "name": f"💰 {template.source} (Projected)",
+                            "amount": template.amount,
+                            "date": od,
+                            "type": "Projected"
+                        })
+                        
+            # Fetch Expenses
+            # 1. Actual
+            actual_expenses = db.query(Expense).filter(
+                Expense.household_id == household_id,
+                Expense.is_recurring == False,
+                Expense.date >= start_range,
+                Expense.date <= end_range
+            ).all()
+            
+            # 2. Recurring templates
+            recurring_expenses = db.query(Expense).filter(
+                Expense.household_id == household_id,
+                Expense.is_recurring == True
+            ).all()
+            
+            # 3. Subscriptions
+            subscriptions = db.query(Subscription).filter(
+                Subscription.household_id == household_id,
+                Subscription.status == "active"
+            ).all()
+            
+            # 4. Custom calendar dues
+            from models.finance import PaymentDueDate
+            custom_dues = db.query(PaymentDueDate).filter(
+                PaymentDueDate.household_id == household_id,
+                PaymentDueDate.due_date >= start_range,
+                PaymentDueDate.due_date <= end_range
+            ).all()
+            
+            expense_items = []
+            for e in actual_expenses:
+                expense_items.append({
+                    "id": f"act_{e.id}",
+                    "name": f"🔴 {e.merchant or 'Expense'} ({e.category.name if e.category else 'Other'})",
+                    "amount": e.amount,
+                    "date": e.date,
+                    "type": "Logged"
+                })
+            for template in recurring_expenses:
+                occ_dates = get_occurrences_in_range(template.date, template.frequency, start_range, end_range)
+                for od in occ_dates:
+                    if od > today_date:
+                        expense_items.append({
+                            "id": f"proj_exp_{template.id}_{od.strftime('%Y%m%d')}",
+                            "name": f"🔴 {template.merchant or 'Bill'} (Projected)",
+                            "amount": template.amount,
+                            "date": od,
+                            "type": "Projected"
+                        })
+            for sub in subscriptions:
+                occ_dates = get_occurrences_in_range(sub.next_renewal, sub.frequency, start_range, end_range)
+                for od in occ_dates:
+                    if od > today_date:
+                        expense_items.append({
+                            "id": f"proj_sub_{sub.id}_{od.strftime('%Y%m%d')}",
+                            "name": f"🍇 Sub: {sub.name} (Projected)",
+                            "amount": sub.amount,
+                            "date": od,
+                            "type": "Projected"
+                        })
+            for cd in custom_dues:
+                expense_items.append({
+                    "id": f"due_{cd.id}",
+                    "name": f"🔔 Calendar Due: {cd.name} " + ("(Paid)" if cd.is_paid else "(Unpaid)"),
+                    "amount": cd.amount,
+                    "date": cd.due_date,
+                    "type": "Calendar Scheduled"
+                })
+                
+            # Sort
+            income_items.sort(key=lambda x: x["date"])
+            expense_items.sort(key=lambda x: x["date"])
+
+            # Render forecaster layout
+            if not income_items and not expense_items:
+                st.info("No transaction data found for this forecast range.")
+            else:
+                st.markdown("---")
+                
+                # Check/Uncheck actions
+                act_col1, act_col2, _ = st.columns([1, 1, 4])
+                with act_col1:
+                    if st.button("Check All Bills", key="fore_check_all"):
+                        for item in expense_items:
+                            st.session_state[f"sel_fore_{item['id']}"] = True
+                        st.rerun()
+                with act_col2:
+                    if st.button("Uncheck All Bills", key="fore_uncheck_all"):
+                        for item in expense_items:
+                            st.session_state[f"sel_fore_{item['id']}"] = False
+                        st.rerun()
+
+                # Split layout: Incomes (left) & Expenses Checklist (right)
+                col_l, col_r = st.columns([2, 3])
+                
+                selected_expense_amounts = []
+                
+                with col_l:
+                    st.markdown("#### 💰 Expected Incomes")
+                    if not income_items:
+                        st.caption("No incomes expected in this range.")
+                    else:
+                        inc_table = []
+                        for i in income_items:
+                            inc_table.append({
+                                "Date": i["date"].strftime("%d %b %Y"),
+                                "Income Source": i["name"],
+                                "Amount": format_currency(i["amount"], currency)
+                            })
+                        st.dataframe(pd.DataFrame(inc_table), hide_index=True, use_container_width=True)
+                
+                with col_r:
+                    st.markdown("#### 📝 Expected Outgoings (Check to include)")
+                    if not expense_items:
+                        st.caption("No expenses expected in this range.")
+                    else:
+                        for idx, item in enumerate(expense_items):
+                            chk_key = f"sel_fore_{item['id']}"
+                            # Default to True
+                            if chk_key not in st.session_state:
+                                st.session_state[chk_key] = True
+                            
+                            label = f"📅 {item['date'].strftime('%d %b')} · {item['name']} · **{format_currency(item['amount'], currency)}**"
+                            is_checked = st.checkbox(label, value=st.session_state[chk_key], key=chk_key)
+                            if is_checked:
+                                selected_expense_amounts.append(item["amount"])
+                                
+                # Summary Box at the bottom
+                total_income_sum = sum(i["amount"] for i in income_items)
+                total_expenses_sum = sum(selected_expense_amounts)
+                net_savings = total_income_sum - total_expenses_sum
+                
+                st.markdown("---")
+                st.markdown("#### 📊 Selected Range Savings Projection Summary")
+                s_col1, s_col2, s_col3 = st.columns(3)
+                s_col1.metric("Total Projected Income", format_currency(total_income_sum, currency))
+                s_col2.metric("Projected Outgoings", format_currency(total_expenses_sum, currency))
+                s_col3.metric(
+                    "Remaining Balance / Savings", 
+                    format_currency(net_savings, currency),
+                    delta=f"{'▲' if net_savings >= 0 else '▼'} {abs(net_savings):.2f}"
+                )

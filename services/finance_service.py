@@ -8,6 +8,96 @@ from models.household import Household
 from models.audit import FinancialScore
 from utils.helpers import get_emergency_fund_rating
 
+
+def _get_occurrences_in_range(start_date: datetime.date, frequency: str,
+                               range_start: datetime.date, range_end: datetime.date) -> list[datetime.date]:
+    """
+    Expands a recurring schedule into all occurrence dates within [range_start, range_end].
+    Uses the same logic as get_next_date in recurring_service to advance the schedule.
+    """
+    from services.recurring_service import get_next_date
+    occurrences: list[datetime.date] = []
+    if not start_date or not frequency:
+        return occurrences
+    curr = start_date
+    for _ in range(500):          # safety cap
+        if curr > range_end:
+            break
+        if curr >= range_start:
+            occurrences.append(curr)
+        nxt = get_next_date(curr, frequency)
+        if nxt <= curr:           # prevent infinite loop on bad frequency
+            break
+        curr = nxt
+    return occurrences
+
+
+def calculate_income_for_period(db: DBSession, household_id: int,
+                                 range_start: datetime.date, range_end: datetime.date) -> float:
+    """
+    Returns total income for the household within [range_start, range_end].
+    Includes:
+      - All logged (non-recurring) income records whose date falls in the range.
+      - All occurrences of recurring templates that land in the range.
+    This ensures that, e.g., two fortnightly pays within a calendar month are both counted.
+    """
+    # 1. Logged one-off incomes
+    logged = db.query(func.sum(Income.amount)).filter(
+        Income.household_id == household_id,
+        Income.is_recurring == False,
+        Income.date >= range_start,
+        Income.date <= range_end,
+    ).scalar() or 0.0
+
+    # 2. Recurring templates – expand occurrences
+    templates = db.query(Income).filter(
+        Income.household_id == household_id,
+        Income.is_recurring == True,
+    ).all()
+    recurring_total = 0.0
+    for t in templates:
+        occ = _get_occurrences_in_range(t.date, t.frequency, range_start, range_end)
+        recurring_total += t.amount * len(occ)
+
+    return logged + recurring_total
+
+
+def calculate_expenses_for_period(db: DBSession, household_id: int,
+                                   range_start: datetime.date, range_end: datetime.date,
+                                   category_id: int = None) -> float:
+    """
+    Returns total expenses for the household within [range_start, range_end].
+    Includes:
+      - All logged (non-recurring) expense records whose date falls in the range.
+      - All occurrences of recurring expense templates that land in the range.
+    Optionally filter by category_id.
+    """
+    q_logged = db.query(func.sum(Expense.amount)).filter(
+        Expense.household_id == household_id,
+        Expense.is_recurring == False,
+        Expense.date >= range_start,
+        Expense.date <= range_end,
+    )
+    if category_id is not None:
+        q_logged = q_logged.filter(Expense.category_id == category_id)
+    logged = q_logged.scalar() or 0.0
+
+    # Recurring expense templates
+    q_templates = db.query(Expense).filter(
+        Expense.household_id == household_id,
+        Expense.is_recurring == True,
+    )
+    if category_id is not None:
+        q_templates = q_templates.filter(Expense.category_id == category_id)
+    templates = q_templates.all()
+
+    recurring_total = 0.0
+    for t in templates:
+        occ = _get_occurrences_in_range(t.date, t.frequency, range_start, range_end)
+        recurring_total += t.amount * len(occ)
+
+    return logged + recurring_total
+
 def generate_pay_periods(db: DBSession, household_id: int, start_date: datetime.date, num_periods: int = 12) -> list[PayPeriod]:
     """
     Generates and saves pay periods for a household based on its budget method.

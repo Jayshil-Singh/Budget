@@ -10,10 +10,12 @@ from models.audit import Notification
 from models.household import HouseholdMember
 from models.auth import User
 from services.finance_service import (
-    get_current_pay_period, 
-    calculate_financial_health_score, 
+    get_current_pay_period,
+    calculate_financial_health_score,
     calculate_emergency_fund_coverage,
-    get_essential_expenses_monthly
+    get_essential_expenses_monthly,
+    calculate_income_for_period,
+    calculate_expenses_for_period,
 )
 try:
     from services.forecast_service import calculate_current_balance, generate_cashflow_projection
@@ -64,17 +66,16 @@ def show_dashboard(household_id: int):
         days_remaining = 0
         
         if current_period:
-            period_income = sum(i.amount for i in db.query(Income).filter(
-                Income.household_id == household_id,
-                Income.date >= current_period.start_date,
-                Income.date <= current_period.end_date
-            ).all())
-            
-            period_expenses = sum(e.amount for e in db.query(Expense).filter(
-                Expense.household_id == household_id,
-                Expense.date >= current_period.start_date,
-                Expense.date <= current_period.end_date
-            ).all())
+            # Use helpers that expand recurring templates, so e.g. 2 fortnightly pays
+            # in a monthly budget period are both counted.
+            period_income = calculate_income_for_period(
+                db, household_id,
+                current_period.start_date, current_period.end_date
+            )
+            period_expenses = calculate_expenses_for_period(
+                db, household_id,
+                current_period.start_date, current_period.end_date
+            )
             
             today = datetime.date.today()
             if today <= current_period.end_date:
@@ -294,13 +295,10 @@ def show_dashboard(household_id: int):
                         bv_categories, bv_budgeted, bv_actual = [], [], []
                         for item in budget.items:
                             cat_name = item.category.name if item.category else "Other"
-                            actual_spend = sum(
-                                e.amount for e in db.query(Expense).filter(
-                                    Expense.household_id == household_id,
-                                    Expense.category_id == item.category_id,
-                                    Expense.date >= current_period.start_date,
-                                    Expense.date <= current_period.end_date
-                                ).all()
+                            actual_spend = calculate_expenses_for_period(
+                                db, household_id,
+                                current_period.start_date, current_period.end_date,
+                                category_id=item.category_id
                             )
                             bv_categories.append(cat_name)
                             bv_budgeted.append(item.limit_amount)
@@ -342,18 +340,8 @@ def show_dashboard(household_id: int):
                     else:
                         m_end = m_start.replace(month=m_start.month + 1, day=1) - datetime.timedelta(days=1)
 
-                    m_income = sum(
-                        inc.amount for inc in db.query(Income).filter(
-                            Income.household_id == household_id,
-                            Income.date >= m_start, Income.date <= m_end
-                        ).all()
-                    )
-                    m_expense = sum(
-                        exp.amount for exp in db.query(Expense).filter(
-                            Expense.household_id == household_id,
-                            Expense.date >= m_start, Expense.date <= m_end
-                        ).all()
-                    )
+                    m_income = calculate_income_for_period(db, household_id, m_start, m_end)
+                    m_expense = calculate_expenses_for_period(db, household_id, m_start, m_end)
                     months_data.append({
                         "Month": m_start.strftime("%b %Y"),
                         "Income": m_income,
