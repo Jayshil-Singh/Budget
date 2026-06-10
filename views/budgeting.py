@@ -4,7 +4,7 @@ import pandas as pd
 from database import get_db
 from models.finance import PayPeriod, ExpenseCategory, Expense
 from models.budget import Budget, BudgetItem, SinkingFund
-from services.finance_service import get_current_pay_period
+from services.finance_service import get_current_pay_period, generate_pay_periods
 from config import SINKING_FUND_TYPES
 from utils.helpers import format_currency, get_days_remaining
 
@@ -32,7 +32,27 @@ def show_budgeting(household_id: int):
         # ----------------------------------------------------
         with tab_bud:
             if not current_period:
-                st.info("No active pay cycle found today. Please generate pay periods.")
+                st.warning("⚠️ No active pay cycle found for today. Generate pay periods to get started.")
+                st.markdown("---")
+                st.subheader("📅 Generate Pay Periods")
+                st.write("Choose a start date (your next or most recent payday) and we'll generate the next 12 pay cycle periods automatically.")
+
+                gen_start = st.date_input(
+                    "Pay Period Start Date",
+                    value=datetime.date.today(),
+                    help="Pick your next payday or the start of your current pay cycle."
+                )
+                gen_num = st.slider("Number of periods to generate", min_value=4, max_value=24, value=12, step=1)
+
+                if st.button("🗓️ Generate Pay Periods", type="primary"):
+                    with get_db() as db_gen:
+                        new_periods = generate_pay_periods(db_gen, household_id, gen_start, num_periods=gen_num)
+                    if new_periods:
+                        st.success(f"✅ {len(new_periods)} pay periods generated successfully! Refreshing...")
+                        st.rerun()
+                    else:
+                        st.error("Failed to generate pay periods. Please check your household settings.")
+
             else:
                 st.subheader(f"Current Budget: {current_period.name}")
                 
