@@ -159,18 +159,77 @@ def show_transaction_ledger(household_id: int):
                 df_exp = pd.DataFrame(expense_rows)
                 st.dataframe(df_exp, width="stretch", hide_index=True)
                 
-                # Option to delete
+                # Edit & Delete options
                 if role != "viewer":
-                    delete_id = st.number_input("Enter Expense ID to Delete", min_value=0, step=1)
-                    if st.button("Delete Expense", type="secondary"):
-                        target = db.query(Expense).filter(Expense.id == delete_id, Expense.household_id == household_id).first()
-                        if target:
-                            db.delete(target)
-                            db.commit()
-                            st.success("Expense deleted successfully!")
-                            st.rerun()
-                        else:
-                            st.error("Expense ID not found.")
+                    st.markdown("---")
+                    col_edit, col_del = st.columns(2)
+
+                    # ── EDIT EXPENSE ──
+                    with col_edit:
+                        with st.expander("✏️ Edit an Expense", expanded=False):
+                            edit_id = st.number_input("Expense ID to Edit", min_value=0, step=1, key="edit_exp_id")
+                            if edit_id > 0:
+                                edit_target = db.query(Expense).filter(
+                                    Expense.id == edit_id, Expense.household_id == household_id
+                                ).first()
+                                if edit_target:
+                                    with st.form("edit_expense_form"):
+                                        st.caption(f"Editing Expense #{edit_id}")
+                                        ec1, ec2 = st.columns(2)
+                                        cat_list_e = list(cat_choices.keys())
+                                        cur_cat = edit_target.category.name if edit_target.category else cat_list_e[0]
+                                        cur_cat_idx = cat_list_e.index(cur_cat) if cur_cat in cat_list_e else 0
+                                        with ec1:
+                                            new_amount = st.number_input("Amount (FJD)", min_value=0.01, value=float(edit_target.amount), step=5.0)
+                                            new_cat = st.selectbox("Category", cat_list_e, index=cur_cat_idx)
+                                            new_date = st.date_input("Date", value=edit_target.date)
+                                        with ec2:
+                                            new_merchant = st.text_input("Merchant", value=edit_target.merchant or "")
+                                            new_notes = st.text_area("Notes", value=edit_target.notes or "")
+                                            new_recurring = st.checkbox("Recurring?", value=bool(edit_target.is_recurring))
+                                            freq_opts = ["Weekly", "Fortnightly", "Monthly"]
+                                            cur_freq_idx = freq_opts.index(edit_target.frequency.capitalize()) if edit_target.frequency and edit_target.frequency.capitalize() in freq_opts else 2
+                                            new_freq = st.selectbox("Frequency", freq_opts, index=cur_freq_idx) if new_recurring else None
+
+                                        save_exp = st.form_submit_button("💾 Save Changes", type="primary")
+                                        if save_exp:
+                                            edit_target.amount = new_amount
+                                            edit_target.category_id = cat_choices[new_cat]
+                                            edit_target.date = new_date
+                                            edit_target.merchant = new_merchant
+                                            edit_target.notes = new_notes
+                                            edit_target.is_recurring = new_recurring
+                                            edit_target.frequency = new_freq.lower() if new_freq else None
+                                            # Re-link pay period based on updated date
+                                            updated_period = db.query(PayPeriod).filter(
+                                                PayPeriod.household_id == household_id,
+                                                PayPeriod.start_date <= new_date,
+                                                PayPeriod.end_date >= new_date
+                                            ).first()
+                                            edit_target.pay_period_id = updated_period.id if updated_period else None
+                                            db.commit()
+                                            st.success(f"✅ Expense #{edit_id} updated successfully!")
+                                            st.rerun()
+                                else:
+                                    st.error("Expense ID not found.")
+
+                    # ── DELETE EXPENSE ──
+                    with col_del:
+                        with st.expander("🗑️ Delete an Expense", expanded=False):
+                            delete_id = st.number_input("Expense ID to Delete", min_value=0, step=1, key="del_exp_id")
+                            if delete_id > 0:
+                                del_target = db.query(Expense).filter(
+                                    Expense.id == delete_id, Expense.household_id == household_id
+                                ).first()
+                                if del_target:
+                                    st.warning(f"⚠️ You are about to delete: **{del_target.merchant or 'Expense'}** — {format_currency(del_target.amount, currency)} on {del_target.date}")
+                                    if st.button("🗑️ Confirm Delete Expense", type="secondary", key="confirm_del_exp"):
+                                        db.delete(del_target)
+                                        db.commit()
+                                        st.success("Expense deleted successfully!")
+                                        st.rerun()
+                                else:
+                                    st.error("Expense ID not found.")
 
         # ----------------------------------------------------
         # INCOMES TAB
@@ -247,15 +306,71 @@ def show_transaction_ledger(household_id: int):
                 df_inc = pd.DataFrame(income_rows)
                 st.dataframe(df_inc, width="stretch", hide_index=True)
                 
-                # Delete income
+                # Edit & Delete options
                 if role != "viewer":
-                    delete_inc_id = st.number_input("Enter Income ID to Delete", min_value=0, step=1)
-                    if st.button("Delete Income", type="secondary"):
-                        target = db.query(Income).filter(Income.id == delete_inc_id, Income.household_id == household_id).first()
-                        if target:
-                            db.delete(target)
-                            db.commit()
-                            st.success("Income record deleted successfully!")
-                            st.rerun()
-                        else:
-                            st.error("Income ID not found.")
+                    st.markdown("---")
+                    col_inc_edit, col_inc_del = st.columns(2)
+
+                    # ── EDIT INCOME ──
+                    with col_inc_edit:
+                        with st.expander("✏️ Edit an Income Record", expanded=False):
+                            edit_inc_id = st.number_input("Income ID to Edit", min_value=0, step=1, key="edit_inc_id")
+                            if edit_inc_id > 0:
+                                edit_inc = db.query(Income).filter(
+                                    Income.id == edit_inc_id, Income.household_id == household_id
+                                ).first()
+                                if edit_inc:
+                                    with st.form("edit_income_form"):
+                                        st.caption(f"Editing Income #{edit_inc_id}")
+                                        ic1, ic2 = st.columns(2)
+                                        cur_src_idx = INCOME_SOURCES.index(edit_inc.source) if edit_inc.source in INCOME_SOURCES else 0
+                                        with ic1:
+                                            new_inc_source = st.selectbox("Source", INCOME_SOURCES, index=cur_src_idx)
+                                            new_inc_amount = st.number_input("Amount (FJD)", min_value=0.01, value=float(edit_inc.amount), step=50.0)
+                                            new_inc_date = st.date_input("Date", value=edit_inc.date)
+                                        with ic2:
+                                            new_inc_recurring = st.checkbox("Recurring?", value=bool(edit_inc.is_recurring))
+                                            freq_opts_i = ["Weekly", "Fortnightly", "Monthly"]
+                                            cur_freq_i = freq_opts_i.index(edit_inc.frequency.capitalize()) if edit_inc.frequency and edit_inc.frequency.capitalize() in freq_opts_i else 1
+                                            new_inc_freq = st.selectbox("Frequency", freq_opts_i, index=cur_freq_i) if new_inc_recurring else None
+                                            new_inc_desc = st.text_area("Description / Notes", value=edit_inc.description or "")
+
+                                        save_inc = st.form_submit_button("💾 Save Changes", type="primary")
+                                        if save_inc:
+                                            edit_inc.source = new_inc_source
+                                            edit_inc.amount = new_inc_amount
+                                            edit_inc.date = new_inc_date
+                                            edit_inc.is_recurring = new_inc_recurring
+                                            edit_inc.frequency = new_inc_freq.lower() if new_inc_freq else None
+                                            edit_inc.description = new_inc_desc or None
+                                            # Re-link pay period based on updated date
+                                            updated_inc_period = db.query(PayPeriod).filter(
+                                                PayPeriod.household_id == household_id,
+                                                PayPeriod.start_date <= new_inc_date,
+                                                PayPeriod.end_date >= new_inc_date
+                                            ).first()
+                                            edit_inc.pay_period_id = updated_inc_period.id if updated_inc_period else None
+                                            db.commit()
+                                            st.success(f"✅ Income #{edit_inc_id} updated successfully!")
+                                            st.rerun()
+                                else:
+                                    st.error("Income ID not found.")
+
+                    # ── DELETE INCOME ──
+                    with col_inc_del:
+                        with st.expander("🗑️ Delete an Income Record", expanded=False):
+                            delete_inc_id = st.number_input("Income ID to Delete", min_value=0, step=1, key="del_inc_id")
+                            if delete_inc_id > 0:
+                                del_inc = db.query(Income).filter(
+                                    Income.id == delete_inc_id, Income.household_id == household_id
+                                ).first()
+                                if del_inc:
+                                    st.warning(f"⚠️ You are about to delete: **{del_inc.source}** — {format_currency(del_inc.amount, currency)} on {del_inc.date}")
+                                    if st.button("🗑️ Confirm Delete Income", type="secondary", key="confirm_del_inc"):
+                                        db.delete(del_inc)
+                                        db.commit()
+                                        st.success("Income record deleted successfully!")
+                                        st.rerun()
+                                else:
+                                    st.error("Income ID not found.")
+
