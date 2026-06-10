@@ -75,17 +75,17 @@ def show_transaction_ledger(household_id: int):
                         is_recurring = st.session_state.get("new_exp_is_recurring", False)
                         col1, col2 = st.columns(2)
                         with col1:
-                            raw_amount = st.number_input("Amount", min_value=0.01, step=5.0)
+                            raw_amount = st.number_input("Amount", min_value=0.01, step=5.0, key="new_exp_amount")
                             exp_currency = st.selectbox("Currency", list(FX_TO_FJD.keys()), index=0,
-                                                        help="Amount will be converted to FJD at current rates.")
-                            category_name = st.selectbox("Category", cat_list, index=default_cat_idx)
+                                                        help="Amount will be converted to FJD at current rates.", key="new_exp_currency")
+                            category_name = st.selectbox("Category", cat_list, index=default_cat_idx, key="new_exp_category")
                             if is_recurring:
                                 date = st.date_input("As of Date (Recurrence Start)", datetime.date.today(), key="new_exp_date_rec")
                             else:
                                 date = st.date_input("Date", datetime.date.today(), key="new_exp_date_normal")
                         with col2:
-                            merchant = st.text_input("Merchant", value=autotag_merchant or "", placeholder="e.g. MH Supermarket")
-                            notes = st.text_area("Notes", placeholder="Extra details...")
+                            merchant = st.text_input("Merchant", value=autotag_merchant or "", placeholder="e.g. MH Supermarket", key="new_exp_merchant")
+                            notes = st.text_area("Notes", placeholder="Extra details...", key="new_exp_notes")
                             is_recurring = st.checkbox("Is Recurring Bill?", value=is_recurring, key="new_exp_is_recurring")
                             if is_recurring:
                                 frequency_choice = st.selectbox("Frequency", ["Weekly", "Fortnightly", "Monthly", "Custom"], index=2, key="new_exp_freq")
@@ -97,7 +97,7 @@ def show_transaction_ledger(household_id: int):
                             else:
                                 frequency = None
 
-                        submit_exp = st.button("Log Expense", type="primary")
+                        submit_exp = st.button("Log Expense", type="primary", key="new_exp_submit")
 
                         if submit_exp:
                             fx_rate = FX_TO_FJD.get(exp_currency, 1.0)
@@ -283,10 +283,10 @@ def show_transaction_ledger(household_id: int):
                         inc_recurring = st.session_state.get("new_inc_is_recurring", False)
                         col1, col2 = st.columns(2)
                         with col1:
-                            inc_source_input = st.selectbox("Source", INCOME_SOURCES)
-                            inc_raw_amount = st.number_input("Net Amount", min_value=0.01, step=50.0)
+                            inc_source_input = st.selectbox("Source", INCOME_SOURCES, key="new_inc_source")
+                            inc_raw_amount = st.number_input("Net Amount", min_value=0.01, step=50.0, key="new_inc_amount")
                             inc_currency = st.selectbox("Currency", list(FX_TO_FJD.keys()), index=0,
-                                                        help="Amount will be converted to FJD at current rates.")
+                                                        help="Amount will be converted to FJD at current rates.", key="new_inc_currency")
                             if inc_recurring:
                                 inc_date = st.date_input("As of Date (Recurrence Start)", datetime.date.today(), key="new_inc_date_rec")
                             else:
@@ -303,7 +303,7 @@ def show_transaction_ledger(household_id: int):
                             else:
                                 inc_freq_input = None
 
-                        submit_inc = st.button("Log Income", type="primary")
+                        submit_inc = st.button("Log Income", type="primary", key="new_inc_submit")
 
                         if submit_inc:
                             fx_rate = FX_TO_FJD.get(inc_currency, 1.0)
