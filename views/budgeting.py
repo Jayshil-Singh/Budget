@@ -553,3 +553,201 @@ def show_budgeting(household_id: int):
                     format_currency(net_savings, currency),
                     delta=f"{'▲' if net_savings >= 0 else '▼'} {abs(net_savings):.2f}"
                 )
+
+                # ── CUMULATIVE SAVINGS: today → end_range ──────────────────────────────
+                # Only show if the end_range is in the future
+                if end_range > today_date:
+                    st.markdown("---")
+                    st.markdown("#### 🚀 Cumulative Savings: Today → " + end_range.strftime("%d %b %Y"))
+                    st.caption(
+                        f"Projects how much you will accumulate from **today ({today_date.strftime('%d %b %Y')})** "
+                        f"through to **{end_range.strftime('%d %b %Y')}**, "
+                        "counting every recurring income & selected expense occurrence along the way."
+                    )
+
+                    # Build checked-expense id set for filtering
+                    checked_exp_ids = {
+                        item["id"]
+                        for item in expense_items
+                        if st.session_state.get(f"sel_fore_{item['id']}", True)
+                    }
+
+                    # ── Month-by-month breakdown from today to end_range ──
+                    import plotly.graph_objects as go
+
+                    # Determine month boundaries to iterate
+                    def _month_ranges_between(d_start: datetime.date, d_end: datetime.date):
+                        """Yields (month_label, m_start, m_end) for each calendar month in range."""
+                        cur = d_start.replace(day=1)
+                        while cur <= d_end:
+                            if cur.month == 12:
+                                nxt = datetime.date(cur.year + 1, 1, 1)
+                            else:
+                                nxt = datetime.date(cur.year, cur.month + 1, 1)
+                            m_end = nxt - datetime.timedelta(days=1)
+                            yield cur.strftime("%b %Y"), cur, min(m_end, d_end)
+                            cur = nxt
+
+                    cum_months = []
+                    running_cum = 0.0
+
+                    # Collect all recurring income templates (not yet filtered by range)
+                    all_rec_incomes = db.query(Income).filter(
+                        Income.household_id == household_id,
+                        Income.is_recurring == True
+                    ).all()
+                    all_rec_expenses = db.query(Expense).filter(
+                        Expense.household_id == household_id,
+                        Expense.is_recurring == True
+                    ).all()
+                    all_subs = db.query(Subscription).filter(
+                        Subscription.household_id == household_id,
+                        Subscription.status == "active"
+                    ).all()
+
+                    for m_label, m_start, m_end in _month_ranges_between(today_date, end_range):
+                        # Clamp range start to today for the first month
+                        eff_start = max(m_start, today_date)
+
+                        # Income: logged (non-recurring) in range
+                        m_logged_inc = sum(
+                            i.amount for i in db.query(Income).filter(
+                                Income.household_id == household_id,
+                                Income.is_recurring == False,
+                                Income.date >= eff_start,
+                                Income.date <= m_end
+                            ).all()
+                        )
+                        # Income: recurring template occurrences
+                        m_rec_inc = 0.0
+                        for t in all_rec_incomes:
+                            occ = get_occurrences_in_range(t.date, t.frequency, eff_start, m_end)
+                            m_rec_inc += t.amount * len(occ)
+
+                        m_total_inc = m_logged_inc + m_rec_inc
+
+                        # Expenses: logged (non-recurring) in range — only include if their id is checked
+                        m_logged_exp = sum(
+                            e.amount for e in db.query(Expense).filter(
+                                Expense.household_id == household_id,
+                                Expense.is_recurring == False,
+                                Expense.date >= eff_start,
+                                Expense.date <= m_end
+                            ).all()
+                            if f"act_{e.id}" in checked_exp_ids
+                        )
+                        # Expenses: recurring template occurrences — only if checked
+                        m_rec_exp = 0.0
+                        for t in all_rec_expenses:
+                            occ = get_occurrences_in_range(t.date, t.frequency, eff_start, m_end)
+                            for od in occ:
+                                exp_id = f"proj_exp_{t.id}_{od.strftime('%Y%m%d')}"
+                                if exp_id in checked_exp_ids:
+                                    m_rec_exp += t.amount
+                        # Subscriptions
+                        for sub in all_subs:
+                            occ = get_occurrences_in_range(sub.next_renewal, sub.frequency, eff_start, m_end)
+                            for od in occ:
+                                sub_id = f"proj_sub_{sub.id}_{od.strftime('%Y%m%d')}"
+                                if sub_id in checked_exp_ids:
+                                    m_rec_exp += sub.amount
+
+                        m_total_exp = m_logged_exp + m_rec_exp
+                        m_net = m_total_inc - m_total_exp
+                        running_cum += m_net
+
+                        cum_months.append({
+                            "Month": m_label,
+                            "Income": round(m_total_inc, 2),
+                            "Expenses": round(m_total_exp, 2),
+                            "Net Saved": round(m_net, 2),
+                            "Cumulative": round(running_cum, 2),
+                        })
+
+                    if cum_months:
+                        # KPI row
+                        total_cum_inc  = sum(r["Income"]   for r in cum_months)
+                        total_cum_exp  = sum(r["Expenses"] for r in cum_months)
+                        total_cum_save = running_cum
+
+                        kc1, kc2, kc3, kc4 = st.columns(4)
+                        kc1.metric("📅 Months Covered", len(cum_months))
+                        kc2.metric("💰 Total Projected Income",
+                                   format_currency(total_cum_inc, currency))
+                        kc3.metric("💸 Total Projected Expenses",
+                                   format_currency(total_cum_exp, currency))
+                        kc4.metric(
+                            "🏦 Total Projected Savings",
+                            format_currency(total_cum_save, currency),
+                            delta=f"{'▲' if total_cum_save >= 0 else '▼'} {abs(total_cum_save):.2f}"
+                        )
+
+                        st.write("")
+
+                        import plotly.graph_objects as go
+                        df_cum = pd.DataFrame(cum_months)
+
+                        # Stacked income/expense bar + cumulative line
+                        fig_cum = go.Figure()
+                        fig_cum.add_trace(go.Bar(
+                            name="Income",
+                            x=df_cum["Month"], y=df_cum["Income"],
+                            marker_color="rgba(46, 213, 115, 0.75)",
+                            hovertemplate="%{x}<br>Income: %{y:,.2f}<extra></extra>"
+                        ))
+                        fig_cum.add_trace(go.Bar(
+                            name="Expenses",
+                            x=df_cum["Month"], y=df_cum["Expenses"],
+                            marker_color="rgba(255, 82, 82, 0.7)",
+                            hovertemplate="%{x}<br>Expenses: %{y:,.2f}<extra></extra>"
+                        ))
+                        fig_cum.add_trace(go.Scatter(
+                            name="Cumulative Savings",
+                            x=df_cum["Month"], y=df_cum["Cumulative"],
+                            mode="lines+markers+text",
+                            line=dict(color="#FFD700", width=3, dash="dot"),
+                            marker=dict(size=8, color="#FFD700"),
+                            text=[format_currency(v, currency) for v in df_cum["Cumulative"]],
+                            textposition="top center",
+                            textfont=dict(size=11, color="#FFD700"),
+                            yaxis="y2",
+                            hovertemplate="%{x}<br>Cumulative: %{y:,.2f}<extra></extra>"
+                        ))
+                        fig_cum.update_layout(
+                            barmode="group",
+                            height=340,
+                            margin=dict(l=10, r=10, t=30, b=10),
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="white",
+                            font_family="Outfit",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                            xaxis=dict(showgrid=False),
+                            yaxis=dict(
+                                title="Amount",
+                                showgrid=True,
+                                gridcolor="rgba(255,255,255,0.05)"
+                            ),
+                            yaxis2=dict(
+                                title="Cumulative Savings",
+                                overlaying="y",
+                                side="right",
+                                showgrid=False,
+                                tickfont=dict(color="#FFD700")
+                            )
+                        )
+                        st.plotly_chart(fig_cum, use_container_width=True)
+
+                        # Month-by-month detail table
+                        with st.expander("📋 Month-by-Month Breakdown", expanded=False):
+                            detail_rows = []
+                            for r in cum_months:
+                                detail_rows.append({
+                                    "Month": r["Month"],
+                                    "Income": format_currency(r["Income"], currency),
+                                    "Expenses": format_currency(r["Expenses"], currency),
+                                    "Net Saved": format_currency(r["Net Saved"], currency),
+                                    "Running Total": format_currency(r["Cumulative"], currency),
+                                })
+                            st.dataframe(pd.DataFrame(detail_rows), hide_index=True, use_container_width=True)
+
