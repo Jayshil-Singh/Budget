@@ -299,19 +299,31 @@ def show_pay_settings(household_id: int):
                 # Delete a period
                 if role != "viewer":
                     st.markdown("---")
-                    st.markdown("**🗑️ Delete a Period**")
-                    st.caption("⚠️ Deleting a period will unlink any expenses/income tied to it (they are not deleted).")
-                    period_names = {p.name: p.id for p in all_periods}
-                    del_period_name = st.selectbox("Select Period to Delete", list(period_names.keys()), key="pm_del_sel")
-                    if st.button("🗑️ Confirm Delete Period", type="secondary", key="pm_del_btn"):
-                        del_target = db.query(PayPeriod).filter(
-                            PayPeriod.id == period_names[del_period_name],
-                            PayPeriod.household_id == household_id
-                        ).first()
-                        if del_target:
-                            db.delete(del_target)
+                    col_del1, col_del2 = st.columns(2)
+                    with col_del1:
+                        st.markdown("**🗑️ Delete a Single Period**")
+                        st.caption("⚠️ Deleting a period will unlink any expenses/income tied to it (they are not deleted).")
+                        period_names = {p.name: p.id for p in all_periods}
+                        del_period_name = st.selectbox("Select Period to Delete", list(period_names.keys()), key="pm_del_sel")
+                        if st.button("🗑️ Confirm Delete Period", type="secondary", key="pm_del_btn"):
+                            del_target = db.query(PayPeriod).filter(
+                                PayPeriod.id == period_names[del_period_name],
+                                PayPeriod.household_id == household_id
+                            ).first()
+                            if del_target:
+                                db.delete(del_target)
+                                db.commit()
+                                st.success(f"Period '{del_period_name}' deleted.")
+                                st.rerun()
+                    with col_del2:
+                        st.markdown("**💥 Delete All Periods**")
+                        st.caption("⚠️ Deleting all periods will unlink ALL expenses/income from their periods. This cannot be undone.")
+                        confirm_all = st.checkbox("I understand and want to delete all periods", key="pm_del_all_confirm")
+                        if st.button("💥 Delete All Periods", type="primary", key="pm_del_all_btn", disabled=not confirm_all):
+                            for p in all_periods:
+                                db.delete(p)
                             db.commit()
-                            st.success(f"Period '{del_period_name}' deleted.")
+                            st.success(f"Successfully deleted all {len(all_periods)} periods.")
                             st.rerun()
             else:
                 st.info("No periods found. Use the form above to generate them.")
