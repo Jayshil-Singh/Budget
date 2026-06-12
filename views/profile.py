@@ -4,6 +4,7 @@ from models.auth import User
 from services.auth_service import reset_user_password, log_audit
 from services.notification_service import send_email_notification
 from utils.security import verify_password, hash_password
+from utils.styles import init_theme_state, render_theme_toggle
 
 
 def show_profile(user_id: int):
@@ -20,7 +21,9 @@ def show_profile(user_id: int):
             st.error("User not found.")
             return
 
-        tab_info, tab_pwd = st.tabs(["👤 Profile Information", "🔒 Change Password"])
+        tab_info, tab_appearance, tab_pwd = st.tabs([
+            "👤 Profile Information", "🎨 Appearance", "🔒 Change Password",
+        ])
 
         # --------------------------------------------------------
         # PROFILE INFORMATION TAB
@@ -37,6 +40,23 @@ def show_profile(user_id: int):
                     status = "✅ Active" if user.is_active else "❌ Inactive"
                     st.write(f"**Status:** {status}")
                 st.write(f"**Member Since:** {user.created_at.strftime('%d %b %Y')}")
+
+            household_id = st.session_state.get("household_id")
+            if household_id:
+                st.write("")
+                with st.container(border=True):
+                    st.subheader("📥 Export household data")
+                    st.caption("Download a JSON backup of income, expenses, budgets, and goals.")
+                    from services.export_service import export_household_json
+                    import json
+                    payload = export_household_json(db, household_id)
+                    st.download_button(
+                        "Download JSON backup",
+                        data=json.dumps(payload, indent=2),
+                        file_name=f"smartbudget_export_{household_id}.json",
+                        mime="application/json",
+                        width="stretch",
+                    )
 
             st.write("")
             with st.expander("✏️ Edit Profile Details", expanded=False):
@@ -89,9 +109,13 @@ def show_profile(user_id: int):
                         else:
                             st.info("No changes detected.")
 
-        # --------------------------------------------------------
-        # CHANGE PASSWORD TAB
-        # --------------------------------------------------------
+        with tab_appearance:
+            with st.container(border=True):
+                st.subheader("Theme")
+                st.caption("Choose light, dark, or match your device setting.")
+                init_theme_state()
+                render_theme_toggle(persist_user_id=user_id, use_sidebar=False)
+
         with tab_pwd:
             with st.form("change_own_password_form"):
                 st.subheader("Change Password")

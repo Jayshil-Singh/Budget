@@ -9,6 +9,34 @@ from models.audit import FinancialScore
 from utils.helpers import get_emergency_fund_rating
 
 
+def _logged_income_on_date(db: DBSession, household_id: int, source: str,
+                            amount: float, occ_date: datetime.date) -> bool:
+    """True if a non-recurring income entry already exists for this occurrence."""
+    return db.query(Income.id).filter(
+        Income.household_id == household_id,
+        Income.is_recurring == False,
+        Income.source == source,
+        Income.amount == amount,
+        Income.date == occ_date,
+    ).first() is not None
+
+
+def _logged_expense_on_date(db: DBSession, household_id: int, category_id: int,
+                             amount: float, occ_date: datetime.date,
+                             merchant: str | None = None) -> bool:
+    """True if a non-recurring expense entry already exists for this occurrence."""
+    q = db.query(Expense.id).filter(
+        Expense.household_id == household_id,
+        Expense.is_recurring == False,
+        Expense.category_id == category_id,
+        Expense.amount == amount,
+        Expense.date == occ_date,
+    )
+    if merchant:
+        q = q.filter(Expense.merchant == merchant)
+    return q.first() is not None
+
+
 def _get_occurrences_in_range(start_date: datetime.date, frequency: str,
                                range_start: datetime.date, range_end: datetime.date) -> list[datetime.date]:
     """
@@ -56,8 +84,10 @@ def calculate_income_for_period(db: DBSession, household_id: int,
     ).all()
     recurring_total = 0.0
     for t in templates:
-        occ = _get_occurrences_in_range(t.date, t.frequency, range_start, range_end)
-        recurring_total += t.amount * len(occ)
+        occ_dates = _get_occurrences_in_range(t.date, t.frequency, range_start, range_end)
+        for occ_date in occ_dates:
+            if not _logged_income_on_date(db, household_id, t.source, t.amount, occ_date):
+                recurring_total += t.amount
 
     return logged + recurring_total
 
@@ -93,8 +123,12 @@ def calculate_expenses_for_period(db: DBSession, household_id: int,
 
     recurring_total = 0.0
     for t in templates:
-        occ = _get_occurrences_in_range(t.date, t.frequency, range_start, range_end)
-        recurring_total += t.amount * len(occ)
+        occ_dates = _get_occurrences_in_range(t.date, t.frequency, range_start, range_end)
+        for occ_date in occ_dates:
+            if not _logged_expense_on_date(
+                db, household_id, t.category_id, t.amount, occ_date, t.merchant
+            ):
+                recurring_total += t.amount
 
     return logged + recurring_total
 
@@ -257,11 +291,13 @@ def calculate_financial_health_score(db: DBSession, household_id: int) -> tuple[
     budget = db.query(Budget).filter(Budget.household_id == household_id).order_by(Budget.created_at.desc()).first()
     discipline_points = 20.0
     if budget and budget.total_limit > 0:
-        actual_in_budget = db.query(func.sum(Expense.amount)).filter(
+        q_budget_exp = db.query(func.sum(Expense.amount)).filter(
             Expense.household_id == household_id,
-            Expense.pay_period_id == budget.pay_period_id if budget.pay_period_id else True,
-            Expense.date >= last_30_days
-        ).scalar() or 0.0
+            Expense.date >= last_30_days,
+        )
+        if budget.pay_period_id is not None:
+            q_budget_exp = q_budget_exp.filter(Expense.pay_period_id == budget.pay_period_id)
+        actual_in_budget = q_budget_exp.scalar() or 0.0
         
         overspent = actual_in_budget - budget.total_limit
         if overspent > 0:
@@ -310,15 +346,22 @@ def calculate_financial_health_score(db: DBSession, household_id: int) -> tuple[
         "cashflow_stability_score": round(cashflow_points, 1)
     }
     
-    # Store history
-    score_record = FinancialScore(
-        household_id=household_id,
-        score=total_score,
-        details=str(details)
+    # Store history at most once per day per household
+    today_start = datetime.datetime.combine(
+        datetime.date.today(), datetime.time.min
     )
-    db.add(score_record)
-    db.commit()
-    
+    recent = db.query(FinancialScore).filter(
+        FinancialScore.household_id == household_id,
+        FinancialScore.created_at >= today_start,
+    ).first()
+    if not recent:
+        db.add(FinancialScore(
+            household_id=household_id,
+            score=total_score,
+            details=str(details),
+        ))
+        db.commit()
+
     return total_score, details
 
 def detect_recurring_patterns(db: DBSession, household_id: int) -> list[dict]:

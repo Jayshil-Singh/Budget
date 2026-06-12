@@ -50,6 +50,33 @@ def get_next_date(d: datetime.date, frequency: str) -> datetime.date:
     else:
         return d + datetime.timedelta(days=30) # default fallback
 
+
+def initial_recurring_next_date(anchor: datetime.date) -> datetime.date:
+    """First payday is on the anchor date itself, not the following period."""
+    return anchor
+
+
+def repair_recurring_income_schedules(db: DBSession, household_id: int):
+    """Fix legacy income rows where next_date skipped the first payday."""
+    recurring = db.query(Income).filter(
+        Income.household_id == household_id,
+        Income.is_recurring == True,
+    ).all()
+    changed = False
+    for inc in recurring:
+        if not inc.date or not inc.frequency:
+            continue
+        if not inc.next_date:
+            inc.next_date = inc.date
+            changed = True
+            continue
+        if inc.next_date == get_next_date(inc.date, inc.frequency):
+            inc.next_date = inc.date
+            changed = True
+    if changed:
+        db.commit()
+
+
 def post_recurring_transactions(db: DBSession, household_id: int):
     """
     Checks recurring income, expenses, and active subscriptions.
@@ -59,6 +86,8 @@ def post_recurring_transactions(db: DBSession, household_id: int):
     posts_count = 0
     notifications_created = []
 
+    repair_recurring_income_schedules(db, household_id)
+
     # 1. Process recurring incomes
     recurring_incomes = db.query(Income).filter(
         Income.household_id == household_id,
@@ -66,9 +95,9 @@ def post_recurring_transactions(db: DBSession, household_id: int):
     ).all()
 
     for inc in recurring_incomes:
-        # If next_date is None, initialize it using its original date + frequency
+        # If next_date is None, first occurrence is the anchor date
         if not inc.next_date:
-            inc.next_date = get_next_date(inc.date, inc.frequency)
+            inc.next_date = inc.date
             db.commit()
 
         while inc.next_date and inc.next_date <= today:
@@ -100,7 +129,7 @@ def post_recurring_transactions(db: DBSession, household_id: int):
             posts_count += 1
             
             title = f"💰 Recurring Income Posted"
-            message = f"Income of ${inc.amount:.2f} from '{inc.source}' has been auto-posted for {post_date.strftime('%d %b %Y')}."
+            message = f"Income of {inc.amount:.2f} from '{inc.source}' has been auto-posted for {post_date.strftime('%d %b %Y')}."
             notifications_created.append((title, message, "success"))
 
     # 2. Process subscriptions
@@ -138,7 +167,7 @@ def post_recurring_transactions(db: DBSession, household_id: int):
             posts_count += 1
             
             title = f"💸 Subscription Renewal Posted"
-            message = f"Subscription '{sub.name}' (${sub.amount:.2f}) was auto-posted for {post_date.strftime('%d %b %Y')}."
+            message = f"Subscription '{sub.name}' ({sub.amount:.2f}) was auto-posted for {post_date.strftime('%d %b %Y')}."
             notifications_created.append((title, message, "info"))
 
     # 3. Process recurring expenses (without next_date, using template-advancing logic)
@@ -196,7 +225,7 @@ def post_recurring_transactions(db: DBSession, household_id: int):
             
             posts_count += 1
             title = f"💸 Recurring Expense Posted"
-            message = f"Recurring expense '{current_template.merchant or 'Bill'}' (${current_template.amount:.2f}) was auto-posted for {post_date.strftime('%d %b %Y')}."
+            message = f"Recurring expense '{current_template.merchant or 'Bill'}' ({current_template.amount:.2f}) was auto-posted for {post_date.strftime('%d %b %Y')}."
             notifications_created.append((title, message, "info"))
             
             # Now the new template becomes the current template to check for further occurrences

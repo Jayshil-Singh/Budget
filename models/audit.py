@@ -26,7 +26,7 @@ class Notification(Base):
     message = Column(String, nullable=False)
     type = Column(String, default="info", nullable=False)  # warning, info, alert, success
     is_read = Column(Boolean, default=False, nullable=False)
-    channel = Column(String, default="in_app", nullable=False)  # in_app, email, whatsapp
+    channel = Column(String, default="in_app", nullable=False)  # in_app, email
     sent_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     
     # Relationships

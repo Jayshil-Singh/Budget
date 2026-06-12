@@ -7,6 +7,8 @@ from models.budget import SavingsGoal, Debt, SinkingFund
 from models.audit import Notification
 from services.report_service import generate_pdf_report, generate_excel_report, generate_csv_export
 from utils.helpers import format_currency
+from services.finance_service import get_current_pay_period, calculate_income_for_period, calculate_expenses_for_period
+from services.dashboard_service import get_period_comparison, get_budget_progress, get_upcoming_bills
 
 
 def show_reports(household_id: int):
@@ -19,13 +21,51 @@ def show_reports(household_id: int):
 
     currency = st.session_state.get("household_currency", "FJD")
 
-    tab_pdf, tab_excel, tab_csv = st.tabs(["📄 PDF Report", "📊 Excel Workbook", "📁 Raw CSV Export"])
+    tab_summary, tab_pdf, tab_excel, tab_csv = st.tabs([
+        "📝 Plain Summary", "📄 PDF Report", "📊 Excel Workbook", "📁 Raw CSV Export",
+    ])
 
     with get_db() as db:
 
-        # --------------------------------------------------------
-        # PDF REPORT TAB
-        # --------------------------------------------------------
+        with tab_summary:
+            period = get_current_pay_period(db, household_id)
+            if not period:
+                st.info("Set up a pay cycle first to see your summary.")
+            else:
+                income = calculate_income_for_period(db, household_id, period.start_date, period.end_date)
+                expenses = calculate_expenses_for_period(db, household_id, period.start_date, period.end_date)
+                left = income - expenses
+                cmp = get_period_comparison(db, household_id)
+                st.markdown(f"### {period.name}")
+                st.write(
+                    f"This pay cycle you received **{format_currency(income, currency)}** "
+                    f"and spent **{format_currency(expenses, currency)}**."
+                )
+                if left >= 0:
+                    st.success(f"You have {format_currency(left, currency)} left until payday.")
+                else:
+                    st.error(f"You are {format_currency(abs(left), currency)} over budget this cycle.")
+                if cmp and cmp.get("has_prev"):
+                    direction = "more" if cmp["delta"] > 0 else "less"
+                    st.write(
+                        f"That is **{format_currency(abs(cmp['delta']), currency)}** {direction} "
+                        f"than last cycle ({cmp['pct']:+.0f}%)."
+                    )
+                progress = get_budget_progress(db, household_id)
+                if progress:
+                    st.markdown("**Category highlights**")
+                    for row in progress[:5]:
+                        status = "on track" if not row["over"] else "over budget"
+                        st.write(
+                            f"- **{row['category']}**: {format_currency(row['spent'], currency)} "
+                            f"of {format_currency(row['limit'], currency)} ({status})"
+                        )
+                upcoming = get_upcoming_bills(db, household_id, limit=3)
+                if upcoming:
+                    st.markdown("**Coming up**")
+                    for bill in upcoming:
+                        st.write(f"- {bill['name']}: {format_currency(bill['amount'], currency)} on {bill['date']}")
+
         with tab_pdf:
             with st.container(border=True):
                 st.subheader("📄 Monthly Financial Summary PDF")
@@ -37,7 +77,7 @@ def show_reports(household_id: int):
                     "- Savings goals progress"
                 )
                 st.write("")
-                if st.button("🔄 Generate & Download PDF Report", type="primary", use_container_width=True):
+                if st.button("🔄 Generate & Download PDF Report", type="primary", width="stretch"):
                     with st.spinner("Generating your PDF report..."):
                         try:
                             filepath = generate_pdf_report(db, household_id)
@@ -48,7 +88,7 @@ def show_reports(household_id: int):
                                 data=pdf_bytes,
                                 file_name=f"SmartBudget_Report_{datetime.date.today().isoformat()}.pdf",
                                 mime="application/pdf",
-                                use_container_width=True
+                                width="stretch"
                             )
                             st.success("✅ PDF report generated! Click the download button above.")
                         except Exception as e:
@@ -67,7 +107,7 @@ def show_reports(household_id: int):
                     "- Full Expense Register\n"
                 )
                 st.write("")
-                if st.button("🔄 Generate & Download Excel Report", type="primary", use_container_width=True):
+                if st.button("🔄 Generate & Download Excel Report", type="primary", width="stretch"):
                     with st.spinner("Generating your Excel workbook..."):
                         try:
                             filepath = generate_excel_report(db, household_id)
@@ -78,7 +118,7 @@ def show_reports(household_id: int):
                                 data=excel_bytes,
                                 file_name=f"SmartBudget_Excel_{datetime.date.today().isoformat()}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
+                                width="stretch"
                             )
                             st.success("✅ Excel workbook generated! Click the download button above.")
                         except Exception as e:
@@ -95,7 +135,7 @@ def show_reports(household_id: int):
                 with col1:
                     st.write("**Export Expenses CSV**")
                     st.caption("Includes: ID, Category, Amount, Date, Merchant, Notes, Tags")
-                    if st.button("⬇️ Download Expenses CSV", use_container_width=True):
+                    if st.button("⬇️ Download Expenses CSV", width="stretch"):
                         with st.spinner("Exporting expenses..."):
                             try:
                                 filepath = generate_csv_export(db, household_id, "expenses")
@@ -106,7 +146,7 @@ def show_reports(household_id: int):
                                     data=csv_str,
                                     file_name=f"expenses_{datetime.date.today().isoformat()}.csv",
                                     mime="text/csv",
-                                    use_container_width=True
+                                    width="stretch"
                                 )
                             except Exception as e:
                                 st.error(f"Export failed: {e}")
@@ -114,7 +154,7 @@ def show_reports(household_id: int):
                 with col2:
                     st.write("**Export Income CSV**")
                     st.caption("Includes: ID, Source, Amount, Date, Recurring, Frequency")
-                    if st.button("⬇️ Download Income CSV", use_container_width=True):
+                    if st.button("⬇️ Download Income CSV", width="stretch"):
                         with st.spinner("Exporting income..."):
                             try:
                                 filepath = generate_csv_export(db, household_id, "income")
@@ -125,7 +165,7 @@ def show_reports(household_id: int):
                                     data=csv_str,
                                     file_name=f"income_{datetime.date.today().isoformat()}.csv",
                                     mime="text/csv",
-                                    use_container_width=True
+                                    width="stretch"
                                 )
                             except Exception as e:
                                 st.error(f"Export failed: {e}")
@@ -136,7 +176,7 @@ def show_reports(household_id: int):
                 st.subheader("🗄️ Full Data Backup (All Tables)")
                 st.caption("Exports all your household financial data as a combined CSV for archiving.")
 
-                if st.button("⬇️ Download Full Data Backup", type="secondary", use_container_width=True):
+                if st.button("⬇️ Download Full Data Backup", type="secondary", width="stretch"):
                     with st.spinner("Preparing full backup..."):
                         try:
                             output = io.StringIO()
@@ -190,7 +230,7 @@ def show_reports(household_id: int):
                                 data=output.getvalue(),
                                 file_name=f"SmartBudget_FullBackup_{datetime.date.today().isoformat()}.csv",
                                 mime="text/csv",
-                                use_container_width=True
+                                width="stretch"
                             )
                             st.success("✅ Full backup ready for download!")
                         except Exception as e:

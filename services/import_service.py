@@ -22,28 +22,82 @@ CATEGORIZATION_RULES = {
     "Loan Payments": ["personal loan", "loan payment", "credit card payment", "bsp loan", "anz loan"]
 }
 
-def guess_category_by_description(description: str, db: DBSession, household_id: int) -> int | None:
+def _ensure_category(db: DBSession, household_id: int, name: str) -> int:
+    """Return category id, creating a system category if it does not exist."""
+    cat = db.query(ExpenseCategory).filter(
+        (ExpenseCategory.household_id == household_id) | (ExpenseCategory.is_system == True),
+        ExpenseCategory.name == name,
+    ).first()
+    if cat:
+        return cat.id
+    new_cat = ExpenseCategory(name=name, is_system=True)
+    db.add(new_cat)
+    db.flush()
+    return new_cat.id
+
+
+def _find_ledger_match(
+    db: DBSession,
+    household_id: int,
+    tx_date: datetime.date,
+    amount: float,
+    description: str,
+):
+    """Match imported row to existing expense/income by date, amount, and merchant text."""
+    if not tx_date:
+        return None
+    abs_amt = abs(amount)
+    desc_lower = (description or "").lower()
+    window_start = tx_date - datetime.timedelta(days=2)
+    window_end = tx_date + datetime.timedelta(days=2)
+
+    if amount < 0:
+        candidates = db.query(Expense).filter(
+            Expense.household_id == household_id,
+            Expense.is_recurring == False,
+            Expense.date >= window_start,
+            Expense.date <= window_end,
+        ).all()
+        for exp in candidates:
+            if abs(exp.amount - abs_amt) > 0.02:
+                continue
+            merchant = (exp.merchant or "").lower()
+            if merchant and merchant in desc_lower:
+                return exp
+            if exp.date == tx_date and abs(exp.amount - abs_amt) < 0.01:
+                return exp
+    else:
+        candidates = db.query(Income).filter(
+            Income.household_id == household_id,
+            Income.is_recurring == False,
+            Income.date >= window_start,
+            Income.date <= window_end,
+        ).all()
+        for inc in candidates:
+            if abs(inc.amount - amount) > 0.02:
+                continue
+            src = (inc.source or "").lower()
+            if src and src in desc_lower:
+                return inc
+            if inc.date == tx_date and abs(inc.amount - amount) < 0.01:
+                return inc
+    return None
+
+
+def guess_category_by_description(description: str, db: DBSession, household_id: int) -> int:
     """
     Scans the description against keywords to find the matching category ID.
-    If none matches, returns the 'Other' category.
+    Falls back to 'Other', creating it if missing.
     """
     desc_lower = description.lower()
-    
-    # 1. Match against categorization rules
+
     matched_cat_name = "Other"
     for cat_name, keywords in CATEGORIZATION_RULES.items():
         if any(kw in desc_lower for kw in keywords):
             matched_cat_name = cat_name
             break
-            
-    # 2. Get DB Category
-    # System category will have household_id == Null, or specific household
-    cat = db.query(ExpenseCategory).filter(
-        (ExpenseCategory.household_id == household_id) | (ExpenseCategory.is_system == True),
-        ExpenseCategory.name == matched_cat_name
-    ).first()
-    
-    return cat.id if cat else None
+
+    return _ensure_category(db, household_id, matched_cat_name)
 
 def load_bank_csv_safely(text_data: str) -> pd.DataFrame | None:
     lines = text_data.splitlines()
@@ -166,10 +220,13 @@ def parse_bank_csv(
             duplicates += 1
             continue
             
-        # 2. Categorize
+        # 2. Check if ledger already has a matching entry (exact or fuzzy)
+        ledger_match = _find_ledger_match(db, household_id, date_val, amount_val, desc_val)
+
+        # 3. Categorize
         category_id = guess_category_by_description(desc_val, db, household_id)
-        
-        # 3. Create the BankTransaction
+
+        # 4. Create the BankTransaction
         tx = BankTransaction(
             household_id=household_id,
             account_bank=bank_name,
@@ -177,11 +234,16 @@ def parse_bank_csv(
             amount=amount_val,
             description=desc_val,
             reference=ref_val,
-            status="imported",
-            category_id=category_id
+            status="matched" if ledger_match else "imported",
+            category_id=category_id,
+            matched_expense_id=ledger_match.id if ledger_match and amount_val < 0 else None,
+            matched_income_id=ledger_match.id if ledger_match and amount_val >= 0 else None,
         )
         db.add(tx)
-        imported += 1
+        if ledger_match:
+            matched += 1
+        else:
+            imported += 1
         
     db.commit()
     return imported, matched, duplicates
@@ -234,15 +296,8 @@ def reconcile_transaction(db: DBSession, household_id: int, tx_id: int) -> bool:
     if tx.amount < 0:
         # Create Expense
         # Ensure category exists
-        category_id = tx.category_id
-        if not category_id:
-            # Fallback to Other
-            other_cat = db.query(ExpenseCategory).filter(
-                (ExpenseCategory.household_id == household_id) | (ExpenseCategory.is_system == True),
-                ExpenseCategory.name == "Other"
-            ).first()
-            category_id = other_cat.id
-            
+        category_id = tx.category_id or _ensure_category(db, household_id, "Other")
+
         expense = Expense(
             household_id=household_id,
             category_id=category_id,
@@ -277,6 +332,29 @@ def reconcile_transaction(db: DBSession, household_id: int, tx_id: int) -> bool:
     db.commit()
     return True
 
+
+def reconcile_all_imported(db: DBSession, household_id: int) -> tuple[int, int]:
+    """
+    Reconciles all imported bank transactions that have a category assigned.
+    Returns (reconciled_count, skipped_count).
+    """
+    txs = db.query(BankTransaction).filter(
+        BankTransaction.household_id == household_id,
+        BankTransaction.status == "imported",
+    ).all()
+    reconciled = 0
+    skipped = 0
+    for tx in txs:
+        if tx.category_id or tx.amount >= 0:
+            if reconcile_transaction(db, household_id, tx.id):
+                reconciled += 1
+            else:
+                skipped += 1
+        else:
+            skipped += 1
+    return reconciled, skipped
+
+
 def parse_sms_transaction_text(text: str) -> dict | None:
     """
     SMS Regex Patterns for M-PAiSA & MyCash.
@@ -302,7 +380,7 @@ def parse_sms_transaction_text(text: str) -> dict | None:
     # 3. M-PAiSA receipt (received FJD ... from ... on ...)
     # e.g., "Receipt No: 456789012. You have received FJD 100.00 from John Doe on 09/06/2026 10:30."
     m_recv_re = re.search(
-        r"received\s+(?:FJD|F\$)?\s*([\d\.]+)\s+from\s+([^on]+)\s+on\s+([\d/-]+)", 
+        r"received\s+(?:FJD|F\$)?\s*([\d\.]+)\s+from\s+(.+?)\s+on\s+([\d/-]+)",
         text_clean, re.IGNORECASE
     )
     
@@ -333,8 +411,29 @@ def parse_sms_transaction_text(text: str) -> dict | None:
         date_str = m_recv_re.group(3).strip()
         is_income = True
     else:
-        return None
-        
+        # Vodafone / Digicel airtime or bill payment
+        voda_re = re.search(
+            r"(?:Vodafone|Digicel).*?(?:FJD|F\$)\s*([\d\.]+).*?(?:to|for)\s+(.+?)(?:\.|on\s+)",
+            text_clean, re.IGNORECASE,
+        )
+        if voda_re:
+            amount = -float(voda_re.group(1))
+            merchant = voda_re.group(2).strip()
+            date_match = re.search(r"on\s+([\d/-]+)", text_clean, re.IGNORECASE)
+            date_str = date_match.group(1) if date_match else ""
+        else:
+            # Water Authority / EFL style
+            util_re = re.search(
+                r"(?:Water|EFL|Energy).*?(?:FJD|F\$)\s*([\d\.]+).*?on\s+([\d/-]+)",
+                text_clean, re.IGNORECASE,
+            )
+            if util_re:
+                amount = -float(util_re.group(1))
+                merchant = "Utilities"
+                date_str = util_re.group(2).strip()
+            else:
+                return None
+
     parsed_date = None
     if date_str:
         for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y-%m-%d"):

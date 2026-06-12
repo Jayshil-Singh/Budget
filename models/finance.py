@@ -72,6 +72,8 @@ class Expense(Base):
     tags = Column(String, nullable=True)  # Comma separated
     notes = Column(String, nullable=True)
     attachment_id = Column(Integer, nullable=True)  # Linked to attachments table
+    attachment_note = Column(String, nullable=True)  # Receipt reference or file path
+    logged_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     # Relationships

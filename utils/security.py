@@ -27,7 +27,7 @@ def create_user_session(db: DBSession, user_id: int, ip_address: str = None, use
     Creates a new user session in the database.
     """
     token = secrets.token_hex(32)
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=duration_days)
+    expires_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=duration_days)
     
     session = UserSession(
         user_id=user_id,
@@ -46,7 +46,7 @@ def validate_user_session(db: DBSession, token: str) -> UserSession | None:
     Validates a session token and returns the session if valid.
     """
     session = db.query(UserSession).filter(UserSession.session_token == token).first()
-    if session and session.expires_at > datetime.datetime.utcnow():
+    if session and session.expires_at > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None):
         return session
     return None
 

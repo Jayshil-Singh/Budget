@@ -5,16 +5,67 @@ from database import get_db
 from models.finance import Income, Expense, Subscription, PaymentDueDate
 from models.budget import SavingsGoal, Debt, SinkingFund
 from utils.helpers import format_currency
-from streamlit_calendar import calendar as st_calendar
 
-def show_calendar(household_id: int):
+
+def _render_month_grid(events: list, year: int, month: int, today: datetime.date):
+    """Native month grid — works inside nested Streamlit tabs (no iframe)."""
+    events_by_date: dict[datetime.date, list] = {}
+    for e in events:
+        events_by_date.setdefault(e["date"], []).append(e)
+
+    weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    header = st.columns(7)
+    for i, label in enumerate(weekday_labels):
+        with header[i]:
+            st.markdown(f"<div style='text-align:center;font-weight:700;font-size:0.8rem;'>{label}</div>",
+                        unsafe_allow_html=True)
+
+    cal = calendar.Calendar(firstweekday=0)
+    for week in cal.monthdatescalendar(year, month):
+        cols = st.columns(7)
+        for i, day in enumerate(week):
+            with cols[i]:
+                in_month = day.month == month
+                is_today = in_month and day == today
+                day_events = events_by_date.get(day, []) if in_month else []
+
+                if not in_month:
+                    box_class = "cal-day-box cal-day-muted"
+                elif is_today:
+                    box_class = "cal-day-box cal-day-today"
+                else:
+                    box_class = "cal-day-box cal-day-normal"
+
+                chips = ""
+                for ev in day_events[:4]:
+                    chips += (
+                        f'<div class="calendar-cell {ev["color_class"]}" '
+                        f'style="font-size:0.68rem;padding:3px 5px;margin:2px 0;line-height:1.2;">'
+                        f'{ev["title"]}</div>'
+                    )
+                if len(day_events) > 4:
+                    chips += (
+                        f'<div style="font-size:0.65rem;color:#64748b;margin-top:2px;">'
+                        f'+{len(day_events) - 4} more</div>'
+                    )
+
+                st.markdown(
+                    f'<div class="{box_class}">'
+                    f'<div style="font-weight:700;font-size:0.85rem;margin-bottom:4px;">{day.day}</div>'
+                    f'{chips}</div>',
+                    unsafe_allow_html=True,
+                )
+
+
+def show_calendar(household_id: int, embedded: bool = False):
     """
     Renders a color-coded interactive financial calendar monthly grid,
     showing Paydays, Bills, Subscriptions, Debt, Savings Goals, and custom Due Dates.
     Also provides a tool to add, toggle paid status, and delete custom due dates.
     """
-    st.markdown("<h1 class='app-title'>Financial Calendar</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='app-subtitle'>Track, manage, and anticipate upcoming financial events</p>", unsafe_allow_html=True)
+    if not embedded:
+        st.markdown("<h1 class='app-title'>Financial Calendar</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='app-subtitle'>Track, manage, and anticipate upcoming financial events</p>", unsafe_allow_html=True)
     
     # Selection for month/year
     today = datetime.date.today()
@@ -77,28 +128,27 @@ def show_calendar(household_id: int):
                     "color_hex": "#28a745"
                 })
                 
-        # 1b. Projected recurring incomes
+        # 1b. Scheduled recurring paydays (from anchor date, includes first payday)
+        from services.finance_service import _get_occurrences_in_range, _logged_income_on_date
         recurring_incomes = db.query(Income).filter(
             Income.household_id == household_id,
             Income.is_recurring == True
         ).all()
         for inc in recurring_incomes:
-            if inc.next_date:
-                curr_date = inc.next_date
-                iterations = 0
-                while curr_date <= end_date and iterations < 10:
-                    if curr_date >= start_date:
-                        events.append({
-                            "date": curr_date,
-                            "title": f"💰 Pay: {inc.source} (Projected)",
-                            "amount": inc.amount,
-                            "type": "income",
-                            "color_class": "calendar-income",
-                            "color_hex": "#28a745"
-                        })
-                    from services.recurring_service import get_next_date
-                    curr_date = get_next_date(curr_date, inc.frequency)
-                    iterations += 1
+            if not inc.date or not inc.frequency:
+                continue
+            for occ in _get_occurrences_in_range(inc.date, inc.frequency, start_date, end_date):
+                if _logged_income_on_date(db, household_id, inc.source, inc.amount, occ):
+                    continue
+                suffix = " (Projected)" if occ > today else ""
+                events.append({
+                    "date": occ,
+                    "title": f"💰 Pay: {inc.source}{suffix}",
+                    "amount": inc.amount,
+                    "type": "income",
+                    "color_class": "calendar-income",
+                    "color_hex": "#28a745"
+                })
             
         # 2. General Expense events (Bills)
         for exp in expenses:
@@ -123,17 +173,22 @@ def show_calendar(household_id: int):
                 "color_hex": "#ba55d3"
             })
             
-        # 4. Debt Due Dates
+        # 4. Debt payment dates (from start_date schedule)
+        from services.finance_service import _get_occurrences_in_range
         for d in debts:
-            pay_date = datetime.date(selected_year, selected_month, 15)
-            events.append({
-                "date": pay_date,
-                "title": f"🟠 Debt: {d.name} Payment",
-                "amount": d.minimum_payment,
-                "type": "debt",
-                "color_class": "calendar-debt",
-                "color_hex": "#fd7e14"
-            })
+            if not d.start_date or not d.payment_frequency:
+                continue
+            for pay_date in _get_occurrences_in_range(
+                d.start_date, d.payment_frequency, start_date, end_date,
+            ):
+                events.append({
+                    "date": pay_date,
+                    "title": f"🟠 Debt: {d.name} Payment",
+                    "amount": d.minimum_payment,
+                    "type": "debt",
+                    "color_class": "calendar-debt",
+                    "color_hex": "#fd7e14"
+                })
             
         # 5. Goal Targets
         for g in goals:
@@ -174,32 +229,14 @@ def show_calendar(household_id: int):
         </div>
         """, unsafe_allow_html=True)
 
-        # Convert events to streamlit-calendar structure
-        calendar_events = []
-        for e in events:
-            calendar_events.append({
-                "title": f"{e['title']} ({format_currency(e['amount'], currency)})",
-                "start": e["date"].isoformat(),
-                "end": e["date"].isoformat(),
-                "color": e.get("color_hex", "#000000"),
-                "allDay": True
-            })
-
-        # Display Interactive Calendar Widget
+        # Display month grid (native — streamlit-calendar iframe fails in nested tabs)
         with st.container(border=True):
-            st.markdown("### 📅 Interactive Monthly Calendar")
-            calendar_options = {
-                "editable": "false",
-                "selectable": "true",
-                "headerToolbar": {
-                    "left": "",
-                    "center": "title",
-                    "right": "",
-                },
-                "initialDate": f"{selected_year}-{selected_month:02d}-01",
-                "initialView": "dayGridMonth",
-            }
-            st_calendar(events=calendar_events, options=calendar_options)
+            st.markdown(
+                f"### 📅 {calendar.month_name[selected_month]} {selected_year} — Monthly Calendar"
+            )
+            if events:
+                st.caption(f"{len(events)} event(s) this month. Scroll the list below for full amounts.")
+            _render_month_grid(events, selected_year, selected_month, today)
             
         st.write("")
         
@@ -209,7 +246,12 @@ def show_calendar(household_id: int):
         with col_m1:
             with st.container(border=True):
                 st.subheader("➕ Set Custom Payment / Due Date")
-                st.markdown("<p class='app-subtitle'>Add bills or payments not captured by subscription templates. Reminders are sent via email 1 day before.</p>", unsafe_allow_html=True)
+                st.markdown(
+                    "<p class='app-subtitle'>Add bills not captured elsewhere. "
+                    "All dated payments (custom bills, subscriptions, recurring bills, debt, "
+                    "sinking funds, and goals) trigger a day-before email digest with budget context.</p>",
+                    unsafe_allow_html=True,
+                )
                 with st.form("add_due_date_form"):
                     due_name = st.text_input("Payment/Bill Name", placeholder="e.g., EFL Electricity, BSP Loan, Rent")
                     due_amount = st.number_input("Amount", min_value=0.0, step=10.0, format="%.2f")
@@ -260,7 +302,7 @@ def show_calendar(household_id: int):
                                 db.commit()
                                 st.rerun()
                         with col_card3:
-                            if st.button("Delete", key=f"del_due_{cd.id}", type="secondary", use_container_width=True):
+                            if st.button("Delete", key=f"del_due_{cd.id}", type="secondary", width="stretch"):
                                 db.delete(cd)
                                 db.commit()
                                 st.rerun()

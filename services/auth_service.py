@@ -29,7 +29,15 @@ def authenticate_user(db: DBSession, email: str, password: str) -> User | None:
     log_audit(db, user.id, "AUTH_PASSWORD_INCORRECT", f"Incorrect password for user {email}")
     return None
 
-def create_new_user(db: DBSession, email: str, password: str, full_name: str, role: str) -> User | None:
+def create_new_user(
+    db: DBSession,
+    email: str,
+    password: str,
+    full_name: str,
+    role: str,
+    *,
+    must_change_password: bool = False,
+) -> User | None:
     """
     Creates a new user in the system. Enforces roles: admin, owner, partner, viewer.
     """
@@ -42,7 +50,8 @@ def create_new_user(db: DBSession, email: str, password: str, full_name: str, ro
         password_hash=hash_password(password),
         full_name=full_name,
         role=role,
-        is_active=True
+        is_active=True,
+        must_change_password=must_change_password,
     )
     db.add(user)
     db.commit()
@@ -76,6 +85,7 @@ def reset_user_password(db: DBSession, user_id: int, new_password: str, requeste
         return False
         
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False
     db.commit()
     log_audit(db, requester_id or user_id, "PASSWORD_RESET", f"Reset password for user: {user.email}")
     return True
@@ -108,7 +118,13 @@ def create_household_for_user(db: DBSession, user_id: int, name: str, currency: 
     log_audit(db, user_id, "HOUSEHOLD_CREATED", f"Created household {name} ({currency}, {budget_method})")
     return household
 
-def invite_member_to_household(db: DBSession, household_id: int, email: str, role: str, requester_id: int) -> HouseholdMember | None:
+def invite_member_to_household(
+    db: DBSession,
+    household_id: int,
+    email: str,
+    role: str,
+    requester_id: int,
+) -> tuple[HouseholdMember | None, str | None]:
     """
     Adds a member to a household. Validates permissions.
     """
@@ -119,15 +135,27 @@ def invite_member_to_household(db: DBSession, household_id: int, email: str, rol
     ).first()
     
     if not req_mem or req_mem.role not in ["owner", "partner"]:
-        return None
-        
+        return None, None
+
+    household = db.query(Household).filter(Household.id == household_id).first()
+    requester = db.query(User).filter(User.id == requester_id).first()
+    temp_password = None
     user = db.query(User).filter(User.email == email.lower()).first()
     if not user:
-        # Create user with a temporary password if they don't exist
-        # Typically the Admin creates them, but for household self-onboarding
-        # we create a placeholder user that gets activated.
-        # Let's fallback to search
-        return None
+        import secrets
+        temp_password = secrets.token_urlsafe(12)
+        user = create_new_user(
+            db, email.lower(), temp_password,
+            full_name=email.split("@")[0].replace(".", " ").title(),
+            role="viewer",
+            must_change_password=True,
+        )
+        if not user:
+            return None, None
+        log_audit(
+            db, requester_id, "USER_AUTO_CREATED",
+            f"Auto-created account for invitee {email} (must change password on first login)",
+        )
         
     # Check if already a member
     existing = db.query(HouseholdMember).filter(
@@ -136,12 +164,23 @@ def invite_member_to_household(db: DBSession, household_id: int, email: str, rol
     ).first()
     
     if existing:
-        return existing
-        
+        return existing, None
+
     member = HouseholdMember(household_id=household_id, user_id=user.id, role=role)
     db.add(member)
     db.commit()
     db.refresh(member)
-    
+
     log_audit(db, requester_id, "MEMBER_INVITED", f"Invited {email} to household ID {household_id} as {role}")
-    return member
+
+    if temp_password and household:
+        from services.notification_service import send_invite_email
+        send_invite_email(
+            to_email=email.lower(),
+            household_name=household.name,
+            inviter_name=requester.full_name if requester else "A household member",
+            temp_password=temp_password,
+            role=role,
+        )
+
+    return member, temp_password

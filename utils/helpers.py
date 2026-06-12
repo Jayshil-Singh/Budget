@@ -73,6 +73,29 @@ def get_emergency_fund_rating(months: float) -> str:
     else:
         return "Exceptional"
 
+ROLE_LABELS = {
+    "owner": "Household manager",
+    "partner": "Can add & edit",
+    "viewer": "View only",
+    "admin": "Platform admin",
+}
+
+
+def get_role_label(role: str) -> str:
+    """Plain-language label for a household or system role."""
+    return ROLE_LABELS.get((role or "viewer").lower(), role.title())
+
+
+def can_modify(role: str) -> bool:
+    """True if the household role may create or edit records."""
+    return role in ("owner", "partner")
+
+
+def can_delete(role: str) -> bool:
+    """True if the household role may delete records (owners only)."""
+    return role == "owner"
+
+
 def get_health_score_rating(score: float) -> str:
     """
     Translates score (0-100) to qualitative rating.

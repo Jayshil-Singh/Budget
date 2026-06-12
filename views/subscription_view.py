@@ -3,15 +3,18 @@ import datetime
 import pandas as pd
 from database import get_db
 from models.finance import Subscription, ExpenseCategory
-from utils.helpers import format_currency
+from utils.helpers import format_currency, can_modify, can_delete
+from services.mark_paid_service import mark_subscription_paid
+from utils.ux import confirm_button, toast_success, render_empty_state
 
-def show_subscriptions(household_id: int):
+def show_subscriptions(household_id: int, embedded: bool = False):
     """
     Renders the Subscription Tracker panel.
     Calculates monthly/annual totals and enables subscription management.
     """
-    st.markdown("<h1 class='app-title'>Subscriptions Tracker</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='app-subtitle'>Monitor software services, streaming plans, and renewals</p>", unsafe_allow_html=True)
+    if not embedded:
+        st.markdown("<h1 class='app-title'>Subscriptions Tracker</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='app-subtitle'>Monitor software services, streaming plans, and renewals</p>", unsafe_allow_html=True)
     
     currency = st.session_state.get("household_currency", "FJD")
     
@@ -25,8 +28,8 @@ def show_subscriptions(household_id: int):
         role = st.session_state.get("user_role", "viewer")
         
         # 1. Add Subscription Form
-        if role == "viewer":
-            st.info("ℹ️ Read-Only Mode: Viewers cannot track new subscriptions.")
+        if not can_modify(role):
+            st.info("View only — you cannot add subscriptions.")
         else:
             with st.expander("➕ Track New Subscription", expanded=False):
                 with st.form("add_subscription_form"):
@@ -61,7 +64,10 @@ def show_subscriptions(household_id: int):
         subs = db.query(Subscription).filter(Subscription.household_id == household_id).all()
         
         if not subs:
-            st.info("No tracked subscriptions found. Log your recurring plans above.")
+            render_empty_state(
+                "📺", "No subscriptions yet",
+                "Track Netflix, phone plans, and other recurring services above.",
+            )
         else:
             # Calculations
             monthly_total = 0.0
@@ -95,27 +101,39 @@ def show_subscriptions(household_id: int):
                 })
                 
             st.dataframe(pd.DataFrame(sub_rows), width="stretch", hide_index=True)
-            
-            # Action controls (Pause / Cancel / Resume)
-            if role != "viewer":
-                st.write("")
-                col_a1, col_a2 = st.columns(2)
-                with col_a1:
-                    target_sub_id = st.number_input("Enter Subscription ID to manage", min_value=0, step=1)
-                with col_a2:
-                    action = st.selectbox("Action", ["Cancel/Pause Service", "Mark Active", "Delete Record"])
-                    
-                if st.button("Apply Subscription Action", type="secondary"):
-                    target = db.query(Subscription).filter(Subscription.id == target_sub_id, Subscription.household_id == household_id).first()
-                    if target:
-                        if action == "Cancel/Pause Service":
-                            target.status = "paused"
-                        elif action == "Mark Active":
-                            target.status = "active"
-                        else:
-                            db.delete(target)
-                        db.commit()
-                        st.success("Action applied successfully!")
-                        st.rerun()
-                    else:
-                        st.error("Subscription ID not found.")
+
+            if can_modify(role):
+                st.subheader("Manage")
+                for s in subs:
+                    sc1, sc2, sc3, sc4, sc5 = st.columns([3, 1, 1, 1, 1])
+                    with sc1:
+                        st.write(f"**{s.name}** · {format_currency(s.amount, currency)} · renews {s.next_renewal}")
+                        st.caption(s.status.upper())
+                    with sc2:
+                        if s.status == "active" and st.button("✅ Paid", key=f"sub_paid_{s.id}"):
+                            if mark_subscription_paid(db, household_id, s):
+                                toast_success(f"Logged {s.name} payment")
+                            else:
+                                st.info("Already logged.")
+                            st.rerun()
+                    with sc3:
+                        if s.status != "active" and st.button("Resume", key=f"sub_resume_{s.id}"):
+                            s.status = "active"
+                            db.commit()
+                            toast_success(f"{s.name} marked active")
+                            st.rerun()
+                    with sc4:
+                        if s.status == "active" and st.button("Pause", key=f"sub_pause_{s.id}"):
+                            s.status = "paused"
+                            db.commit()
+                            toast_success(f"{s.name} paused")
+                            st.rerun()
+                    with sc5:
+                        if can_delete(role) and confirm_button(
+                            f"sub_del_{s.id}", "Delete", "delete",
+                            f"Remove **{s.name}** from your subscription list?",
+                        ):
+                            db.delete(s)
+                            db.commit()
+                            toast_success("Subscription removed")
+                            st.rerun()

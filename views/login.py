@@ -1,7 +1,6 @@
 import streamlit as st
 from database import get_db
-from services.auth_service import authenticate_user, reset_user_password
-from models.auth import User
+from services.auth_service import authenticate_user
 
 def show_login_page():
     """
@@ -36,12 +35,6 @@ def show_login_page():
                     with get_db() as db:
                         user = authenticate_user(db, email, password)
                         if user:
-                            st.session_state["logged_in"] = True
-                            st.session_state["user_id"] = user.id
-                            st.session_state["user_email"] = user.email
-                            st.session_state["user_name"] = user.full_name
-                            st.session_state["user_role"] = user.role # admin, owner, partner, viewer
-                            
                             # Resolve user IP and agent
                             try:
                                 headers = st.context.headers
@@ -56,19 +49,34 @@ def show_login_page():
                                 except Exception:
                                     ip_address = "127.0.0.1"
                                     user_agent = "Unknown"
-                                    
+
                             if user_agent and len(user_agent) > 200:
                                 user_agent = user_agent[:197] + "..."
-                                
+
                             from utils.security import create_user_session
+                            session_days = 30 if remember_me else 1
                             try:
-                                s_record = create_user_session(db, user.id, ip_address=ip_address, user_agent=user_agent)
-                                st.session_state["session_token"] = s_record.session_token
+                                s_record = create_user_session(
+                                    db, user.id,
+                                    ip_address=ip_address,
+                                    user_agent=user_agent,
+                                    duration_days=session_days,
+                                )
                             except Exception as e:
                                 print(f"[SESSION CREATE ERROR] {e}")
-                                
-                            st.success(f"Welcome back, {user.full_name}!")
-                            st.rerun()
+                                st.error("Login failed: could not create a secure session. Please try again.")
+                            else:
+                                st.session_state["logged_in"] = True
+                                st.session_state["user_id"] = user.id
+                                st.session_state["user_email"] = user.email
+                                st.session_state["user_name"] = user.full_name
+                                st.session_state["user_role"] = user.role
+                                st.session_state["system_role"] = user.role
+                                st.session_state["session_token"] = s_record.session_token
+                                st.session_state["ui_theme"] = getattr(user, "ui_theme", None) or "system"
+                                st.session_state["_theme_synced"] = True
+                                st.success(f"Welcome back, {user.full_name}!")
+                                st.rerun()
                         else:
                             st.error("Invalid email, password, or account is disabled.")
                             
@@ -78,40 +86,29 @@ def show_login_page():
 
 def show_password_reset_page():
     """
-    Renders the password reset view.
+    Renders the password reset view. Self-service reset is disabled;
+    users must contact a platform administrator.
     """
     st.markdown("<h2 class='app-title' style='text-align: center;'>Reset Password</h2>", unsafe_allow_html=True)
-    
+
     col1, col2, col3 = st.columns([1, 2, 1])
-    
+
     with col2:
         with st.container(border=True):
-            st.write("For security reasons, please contact your Platform Administrator to reset your password.")
-            st.info("If you are testing the platform locally, you can use the Administrator account to reset any password via the Admin Portal.")
-            
-            email = st.text_input("Verify Your Email Address").strip()
-            new_password = st.text_input("New Password", type="password")
-            confirm_password = st.text_input("Confirm New Password", type="password")
-            
-            col_r1, col_r2 = st.columns(2)
-            with col_r1:
-                if st.button("Request Reset", type="primary", width="stretch"):
-                    if new_password != confirm_password:
-                        st.error("Passwords do not match.")
-                    elif len(new_password) < 6:
-                        st.error("Password must be at least 6 characters.")
-                    else:
-                        with get_db() as db:
-                            user = db.query(User).filter(User.email == email.lower()).first()
-                            if user:
-                                reset_user_password(db, user.id, new_password, user.id)
-                                st.success("Password updated successfully! Please log in.")
-                                st.session_state["show_reset_view"] = False
-                                st.rerun()
-                            else:
-                                st.error("Email not found in our database.")
-                                
-            with col_r2:
-                if st.button("Back to Login", width="stretch"):
-                    st.session_state["show_reset_view"] = False
-                    st.rerun()
+            st.write(
+                "For security reasons, password resets must be performed by a "
+                "**Platform Administrator**."
+            )
+            st.info(
+                "Please contact your administrator and provide the email address "
+                "registered to your account. They can reset your password via "
+                "**Admin Portal → User Management**."
+            )
+            st.caption(
+                "If you are testing locally, log in as `admin@smartbudget.local` "
+                "and use **Force Reset Password** in the Admin Portal."
+            )
+
+            if st.button("Back to Login", type="primary", width="stretch"):
+                st.session_state["show_reset_view"] = False
+                st.rerun()

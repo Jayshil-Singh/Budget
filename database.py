@@ -26,6 +26,33 @@ engine = create_engine(
 # Create SessionLocal class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
+def _run_sqlite_migrations():
+    """Add new columns to existing SQLite DBs without Alembic."""
+    if not config.DATABASE_URL.startswith("sqlite:///"):
+        return
+    import sqlite3
+    db_path = config.DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    migrations = [
+        ("users", "must_change_password", "INTEGER DEFAULT 0"),
+        ("users", "ui_theme", "TEXT DEFAULT 'system'"),
+        ("expenses", "logged_by_user_id", "INTEGER"),
+        ("expenses", "attachment_note", "TEXT"),
+    ]
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        for table, column, col_type in migrations:
+            try:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+    finally:
+        conn.close()
+
 @contextmanager
 def get_db():
     """
@@ -56,7 +83,8 @@ def init_db():
     import models.audit
     
     Base.metadata.create_all(bind=engine)
-    
+    _run_sqlite_migrations()
+
     # Auto-seed the database if newly created
     try:
         from seed import seed_data

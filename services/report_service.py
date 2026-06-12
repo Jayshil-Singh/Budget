@@ -186,15 +186,19 @@ def generate_excel_report(db: DBSession, household_id: int) -> str:
     
     # 2. Income Sheet
     ws_income = wb.create_sheet(title="Income Register")
-    ws_income.append(["Date", "Source", "Recurring", "Amount"])
-    ws_income.row_dimensions[1].font = font_bold
+    income_headers = ["Date", "Source", "Recurring", "Amount"]
+    ws_income.append(income_headers)
+    for cell in ws_income[1]:
+        cell.font = font_bold
     for inc in incomes:
         ws_income.append([inc.date, inc.source, "Yes" if inc.is_recurring else "No", inc.amount])
-        
+
     # 3. Expense Sheet
     ws_expense = wb.create_sheet(title="Expense Register")
-    ws_expense.append(["Date", "Category", "Merchant", "Amount", "Notes"])
-    ws_expense.row_dimensions[1].font = font_bold
+    expense_headers = ["Date", "Category", "Merchant", "Amount", "Notes"]
+    ws_expense.append(expense_headers)
+    for cell in ws_expense[1]:
+        cell.font = font_bold
     for exp in expenses:
         ws_expense.append([
             exp.date, 

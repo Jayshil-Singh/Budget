@@ -12,6 +12,13 @@ venv/
 ENV/
 env/
 
+# Local database and generated reports
+smartbudget.db
+reports_cache/
+receipts/
+fx_rates_cache.json
+system_banner.json
+
 # IDEs
 .idea/
 .vscode/

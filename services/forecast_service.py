@@ -26,11 +26,10 @@ def generate_cashflow_projection(
     start_date = datetime.date.today()
     current_balance = calculate_current_balance(db, household_id)
     
-    # 1. Fetch recurring incomes
+    # 1. Fetch recurring incomes (schedule anchored on template date)
     recurring_incomes = db.query(Income).filter(
         Income.household_id == household_id,
         Income.is_recurring == True,
-        Income.next_date != None
     ).all()
     
     # 2. Fetch active subscriptions and recurring expenses
@@ -58,7 +57,9 @@ def generate_cashflow_projection(
         
         # Check income hits
         for inc in recurring_incomes:
-            if is_event_date_hit(inc.next_date, inc.frequency, target_date):
+            if not inc.date or not inc.frequency:
+                continue
+            if is_event_date_hit(inc.date, inc.frequency, target_date):
                 day_income += inc.amount
                 events.append(f"Income: {inc.source} (+{inc.amount:.2f})")
                 
@@ -125,12 +126,21 @@ def is_sub_date_hit(next_renewal: datetime.date, frequency: str, target_date: da
         return False
     if target_date == next_renewal:
         return True
-        
+
+    from services.recurring_service import get_next_date
     freq = frequency.lower()
     if freq == "monthly":
-        # Approximately monthly renewal checks
-        diff = (target_date - next_renewal).days
-        return diff % 30 == 0
+        curr = next_renewal
+        for _ in range(500):
+            if curr == target_date:
+                return True
+            if curr > target_date:
+                return False
+            nxt = get_next_date(curr, "monthly")
+            if nxt <= curr:
+                break
+            curr = nxt
+        return False
     elif freq == "annual" or freq == "yearly":
         return target_date.month == next_renewal.month and target_date.day == next_renewal.day
     return False
@@ -174,7 +184,16 @@ def calculate_debt_payoff_forecast(
     
     if not debts:
         return {"snowball": {}, "avalanche": {}}
-        
+
+    def _monthly_payment(debt) -> float:
+        """Convert minimum payment to a monthly equivalent."""
+        freq = (debt.payment_frequency or "monthly").lower()
+        if freq == "weekly":
+            return debt.minimum_payment * 52 / 12
+        if freq == "fortnightly":
+            return debt.minimum_payment * 26 / 12
+        return debt.minimum_payment
+
     # Build models
     results = {}
     for method in ["snowball", "avalanche"]:
@@ -186,7 +205,7 @@ def calculate_debt_payoff_forecast(
                 "name": d.name,
                 "balance": d.current_balance,
                 "interest_rate": d.interest_rate,
-                "min_payment": d.minimum_payment
+                "min_payment": _monthly_payment(d),
             })
             
         if method == "snowball":

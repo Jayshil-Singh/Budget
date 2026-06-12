@@ -18,14 +18,25 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
     Exclusive to the 'admin' system role.
     """
     # Verify Admin Role
-    if st.session_state.get("user_role") != "admin":
+    if st.session_state.get("system_role") != "admin":
         st.error("Access Denied: You do not have permission to view the Admin Portal.")
         return
         
+    ADMIN_SECTIONS = [
+        "👤 User Management",
+        "📈 Platform Stats",
+        "🏷️ Custom Categories",
+        "✉️ Email Logs",
+        "📜 Global System Logs",
+        "🛡️ Active Sessions",
+        "📢 Broadcast & Alerts",
+        "🗄️ Maintenance",
+    ]
+    if active_choice == "🛠️ Admin":
+        st.markdown("<h1 class='app-title'>🛠️ Admin Portal</h1>", unsafe_allow_html=True)
+        active_choice = st.selectbox("Admin section", ADMIN_SECTIONS)
+
     with get_db() as db:
-        # ----------------------------------------------------
-        # USER MANAGEMENT VIEW
-        # ----------------------------------------------------
         if active_choice == "👤 User Management":
             st.markdown("<h1 class='app-title'>👤 User Management</h1>", unsafe_allow_html=True)
             st.markdown("<p class='app-subtitle'>Manage global user accounts, deactivate accounts, and update permissions</p>", unsafe_allow_html=True)
@@ -57,20 +68,25 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                             else:
                                 res = create_new_user(db, new_email, new_pwd, new_name, new_role)
                                 if res:
-                                    email_subject = "Your SmartBudget AI Account Credentials"
+                                    email_subject = "Your SmartBudget AI Account Has Been Created"
                                     email_body = (
                                         f"Hello {new_name},\n\n"
                                         f"An administrator has created a SmartBudget AI account for you.\n\n"
-                                        f"Here are your login credentials:\n"
-                                        f"Email: {new_email}\n"
-                                        f"Password: {new_pwd}\n\n"
+                                        f"Email: {new_email}\n\n"
+                                        f"Your temporary password was set by the administrator. "
+                                        f"Please log in and change it immediately via **My Profile → Change Password**.\n\n"
+                                        f"For security, passwords are never sent by email. "
+                                        f"Contact your administrator if you need your credentials resent in person.\n\n"
                                         f"You can access the application here:\n"
                                         f"https://smart-budget.streamlit.app/\n\n"
                                         f"Regards,\n"
                                         f"SmartBudget AI Team"
                                     )
                                     send_email_notification(email_subject, email_body, to_email=new_email)
-                                    st.success(f"Registered user {new_name} as {new_role.upper()} successfully and sent credentials email!")
+                                    st.success(
+                                        f"Registered user {new_name} as {new_role.upper()} successfully. "
+                                        f"Share the temporary password with them securely (not via email)."
+                                    )
                                     st.rerun()
                                 else:
                                     st.error("Email is already registered.")
@@ -87,7 +103,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                     "Active": "Yes" if u.is_active else "No"
                 })
             df_users = pd.DataFrame(user_rows)
-            st.dataframe(df_users, use_container_width=True, hide_index=True)
+            st.dataframe(df_users, width="stretch", hide_index=True)
             
             # Disable / Enable / Password reset actions
             st.write("")
@@ -104,7 +120,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                 
             action_purpose = st.text_area("Purpose of Action (This will be emailed to the user)", placeholder="Provide reason for deactivation, reactivation, or password reset...", key="action_purpose_val")
             
-            if st.button("Apply Account Action", type="secondary", use_container_width=True):
+            if st.button("Apply Account Action", type="secondary", width="stretch"):
                 if not action_purpose.strip():
                     st.error("Please provide the purpose/reason of the action.")
                 else:
@@ -113,6 +129,11 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         if action == "Disable/Deactivate Account":
                             target_user.is_active = False
                             db.commit()
+                            from services.auth_service import log_audit
+                            log_audit(
+                                db, admin_user_id, "USER_DISABLED",
+                                f"Disabled user {target_user.email}. Reason: {action_purpose}"
+                            )
                             email_subject = "Your SmartBudget AI Account Status Update"
                             email_body = (
                                 f"Hello {target_user.full_name},\n\n"
@@ -128,6 +149,11 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         elif action == "Enable/Reactivate Account":
                             target_user.is_active = True
                             db.commit()
+                            from services.auth_service import log_audit
+                            log_audit(
+                                db, admin_user_id, "USER_REACTIVATED",
+                                f"Reactivated user {target_user.email}. Reason: {action_purpose}"
+                            )
                             email_subject = "Your SmartBudget AI Account Status Update"
                             email_body = (
                                 f"Hello {target_user.full_name},\n\n"
@@ -154,14 +180,19 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                                     email_body = (
                                         f"Hello {target_user.full_name},\n\n"
                                         f"Your password has been reset by the platform administrator.\n\n"
-                                        f"New Password: {reset_pwd_val}\n"
                                         f"Reason/Purpose: {action_purpose}\n\n"
-                                        f"Please log in at https://smart-budget.streamlit.app/ and update your password.\n\n"
+                                        f"Your new temporary password was communicated to you separately "
+                                        f"by the administrator. Please log in at "
+                                        f"https://smart-budget.streamlit.app/ and change it immediately "
+                                        f"via **My Profile → Change Password**.\n\n"
                                         f"Regards,\n"
                                         f"SmartBudget AI Team"
                                     )
                                     send_email_notification(email_subject, email_body, to_email=target_user.email)
-                                    st.success("Password updated and user notified via email!")
+                                    st.success(
+                                        "Password updated. Share the new password with the user "
+                                        "through a secure channel (not email)."
+                                    )
                                     st.rerun()
                             else:
                                 st.error("Please provide the reset password value.")
@@ -266,7 +297,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                     "Budget Method": h.budget_method.upper(),
                     "Created At": h.created_at.strftime("%Y-%m-%d")
                 })
-            st.dataframe(pd.DataFrame(h_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(h_rows), width="stretch", hide_index=True)
 
         # ----------------------------------------------------
         # CATEGORIES VIEW
@@ -279,7 +310,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
             
             # Add System Category
             new_cat_name = st.text_input("New System Category Name", placeholder="e.g. Vacation Extra")
-            if st.button("Add Global Category", type="primary", use_container_width=True):
+            if st.button("Add Global Category", type="primary", width="stretch"):
                 if not new_cat_name:
                     st.error("Please enter a category name.")
                 else:
@@ -364,7 +395,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         "Status": e.status,
                         "Content Snippet": e.body[:100] + "..." if len(e.body) > 100 else e.body
                     })
-                st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(display_rows), width="stretch", hide_index=True)
                 
                 # Export Buttons in column layout
                 st.write("")
@@ -376,7 +407,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         data=csv_data,
                         file_name=f"email_logs_{datetime.date.today()}.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
                 with col_eex2:
                     json_data = df_emails.to_json(orient="records", date_format="iso").encode('utf-8')
@@ -385,7 +416,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         data=json_data,
                         file_name=f"email_logs_{datetime.date.today()}.json",
                         mime="application/json",
-                        use_container_width=True
+                        width="stretch"
                     )
 
         # ----------------------------------------------------
@@ -436,7 +467,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         "Details": l.details or ""
                     })
                 df_audit = pd.DataFrame(g_log_rows)
-                st.dataframe(df_audit, use_container_width=True, hide_index=True)
+                st.dataframe(df_audit, width="stretch", hide_index=True)
                 
                 # Export and Clear Buttons
                 st.write("")
@@ -448,7 +479,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         data=csv_data_aud,
                         file_name=f"audit_logs_{datetime.date.today()}.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
                 with col_aud2:
                     json_data_aud = df_audit.to_json(orient="records", date_format="iso").encode('utf-8')
@@ -457,11 +488,11 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         data=json_data_aud,
                         file_name=f"audit_logs_{datetime.date.today()}.json",
                         mime="application/json",
-                        use_container_width=True
+                        width="stretch"
                     )
                 
                 st.write("")
-                if st.button("Clear System Audit Logs", type="secondary", use_container_width=True):
+                if st.button("Clear System Audit Logs", type="secondary", width="stretch"):
                     db.query(AuditLog).delete()
                     db.commit()
                     st.success("Audit logs cleared successfully!")
@@ -483,7 +514,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
             else:
                 session_data = []
                 for s in sessions:
-                    is_active = s.expires_at > datetime.datetime.utcnow()
+                    is_active = s.expires_at > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
                     session_data.append({
                         "Session ID": s.id,
                         "User Email": s.user.email if s.user else f"User ID {s.user_id}",
@@ -499,27 +530,30 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                 
                 # Display subset of columns for readability
                 display_cols = ["Session ID", "User Email", "IP Address", "Created At", "Expires At", "Token Snippet", "Status"]
-                st.dataframe(df_sessions[display_cols], use_container_width=True, hide_index=True)
+                st.dataframe(df_sessions[display_cols], width="stretch", hide_index=True)
                 
                 # Revoke Section
                 st.write("")
                 col_rev1, col_rev2 = st.columns([2, 1])
                 with col_rev1:
-                    session_to_revoke_token = st.selectbox(
-                        "Select Session to Revoke (by User - Token)",
-                        options=df_sessions["Token"].tolist(),
-                        format_func=lambda x: f"{df_sessions[df_sessions['Token']==x]['User Email'].values[0]} ({x[:8]}...)"
+                    session_to_revoke_id = st.selectbox(
+                        "Select Session to Revoke",
+                        options=df_sessions["Session ID"].tolist(),
+                        format_func=lambda sid: (
+                            f"{df_sessions[df_sessions['Session ID']==sid]['User Email'].values[0]} "
+                            f"({df_sessions[df_sessions['Session ID']==sid]['Token Snippet'].values[0]})"
+                        )
                     )
                 with col_rev2:
                     st.write("") # vertical offset
-                    if st.button("🚫 Revoke Selected Session", type="primary", use_container_width=True):
+                    if st.button("🚫 Revoke Selected Session", type="primary", width="stretch"):
                         from utils.security import destroy_user_session
                         from services.auth_service import log_audit
-                        # Find session to audit-log the revoked user details
-                        rev_s = db.query(UserSession).filter(UserSession.session_token == session_to_revoke_token).first()
+                        rev_s = db.query(UserSession).filter(UserSession.id == session_to_revoke_id).first()
+                        session_to_revoke_token = rev_s.session_token if rev_s else None
                         rev_email = rev_s.user.email if (rev_s and rev_s.user) else "Unknown"
                         
-                        success = destroy_user_session(db, session_to_revoke_token)
+                        success = destroy_user_session(db, session_to_revoke_token) if session_to_revoke_token else False
                         if success:
                             log_audit(db, admin_user_id, "ADMIN_SESSION_REVOKED", f"Admin revoked session for user {rev_email}")
                             st.success(f"Session for user {rev_email} successfully revoked.")
@@ -548,7 +582,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                     )
                 with col_imp2:
                     st.write("") # spacing
-                    if st.button("🎭 Start Impersonating", type="secondary", use_container_width=True):
+                    if st.button("🎭 Start Impersonating", type="secondary", width="stretch"):
                         if target_imp_user.role == "admin":
                             st.error("Safety Guard: Impersonating other administrators is not allowed.")
                         else:
@@ -639,7 +673,8 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
             st.write("### 1. Database Backup")
             st.write("Download the live SQLite database file. Useful for manual snapshots and offline testing.")
             try:
-                db_file_path = "smartbudget.db"
+                import config
+                db_file_path = config.DATABASE_URL.replace("sqlite:///", "")
                 if os.path.exists(db_file_path):
                     with open(db_file_path, "rb") as f:
                         db_bytes = f.read()
@@ -648,7 +683,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
                         data=db_bytes,
                         file_name=f"smartbudget_backup_{datetime.date.today()}.db",
                         mime="application/x-sqlite3",
-                        use_container_width=True
+                        width="stretch"
                     )
                 else:
                     st.error("Database file 'smartbudget.db' not found in root directory.")
@@ -660,7 +695,7 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
             # SQL VACUUM
             st.write("### 2. Run Database Vacuum")
             st.write("Cleans unused database space, rebuilds the index, and reduces SQLite file size.")
-            if st.button("🧹 Optimize & Run SQL VACUUM", type="primary", use_container_width=True):
+            if st.button("🧹 Optimize & Run SQL VACUUM", type="primary", width="stretch"):
                 try:
                     from database import engine
                     with engine.raw_connection() as raw_conn:
@@ -680,9 +715,9 @@ def show_admin_portal(admin_user_id: int, active_choice: str):
             st.write("### 3. Database Maintenance: Prune Logs")
             st.write("Bulk delete historical email and audit records to conserve storage space.")
             days_to_keep = st.number_input("Days of logs to keep", min_value=1, value=30, step=1)
-            if st.button("🔥 Prune Historical Logs", type="secondary", use_container_width=True):
+            if st.button("🔥 Prune Historical Logs", type="secondary", width="stretch"):
                 try:
-                    prune_date = datetime.datetime.utcnow() - datetime.timedelta(days=days_to_keep)
+                    prune_date = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=days_to_keep)
                     
                     # Log count before deletion
                     num_audits_deleted = db.query(AuditLog).filter(AuditLog.timestamp < prune_date).delete()

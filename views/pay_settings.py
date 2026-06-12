@@ -1,6 +1,7 @@
 import streamlit as st
 import datetime
 import pandas as pd
+from contextlib import contextmanager
 from database import get_db
 from models.household import Household, Setting
 from models.finance import Income, Expense, Subscription, PayPeriod
@@ -14,17 +15,29 @@ FREQ_LABELS = {
     "weekly":      "Weekly",
     "fortnightly": "Fortnightly",
     "monthly":     "Monthly",
+    "payday":      "Payday-to-Payday",
 }
 FREQ_PER_YEAR = {
     "weekly":      52,
     "fortnightly": 26,
     "monthly":     12,
+    "payday":      26,
 }
 FREQ_PER_MONTH = {
     "weekly":      52 / 12,   # ≈ 4.333
     "fortnightly": 26 / 12,   # ≈ 2.167
     "monthly":     1.0,
+    "payday":      26 / 12,
 }
+
+
+def _norm_freq(freq: str) -> str:
+    """Map household budget_method values to a supported frequency key."""
+    if freq == "payday":
+        return "fortnightly"
+    if freq in FREQ_PER_YEAR:
+        return freq
+    return "fortnightly"
 
 def _get_setting(db, household_id: int, key: str, default: str = "") -> str:
     row = db.query(Setting).filter(
@@ -32,6 +45,17 @@ def _get_setting(db, household_id: int, key: str, default: str = "") -> str:
         Setting.key == key
     ).first()
     return row.value if row else default
+
+@contextmanager
+def _settings_section(embedded: bool, tab, label: str, expanded: bool = False):
+    """Use expanders when embedded inside another tab (nested st.tabs break in Streamlit)."""
+    if embedded:
+        with st.expander(label, expanded=expanded):
+            yield
+    else:
+        with tab:
+            yield
+
 
 def _set_setting(db, household_id: int, key: str, value: str):
     row = db.query(Setting).filter(
@@ -48,22 +72,29 @@ def _set_setting(db, household_id: int, key: str, value: str):
 # ─────────────────────────────────────────────────────────────
 # Main view
 # ─────────────────────────────────────────────────────────────
-def show_pay_settings(household_id: int):
-    st.markdown("<h1 class='app-title'>Pay & Budget Settings</h1>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='app-subtitle'>Configure your pay cycle, budget method, periods, and view projected savings</p>",
-        unsafe_allow_html=True,
-    )
+def show_pay_settings(household_id: int, embedded: bool = False, page_title: str | None = None):
+    if not embedded:
+        title = page_title or "Settings"
+        subtitle = (
+            "Pay cycle, budget method, and household preferences"
+            if not page_title
+            else "Pay frequency, budget periods, limits calculator, and reminders"
+        )
+        st.markdown(f"<h1 class='app-title'>{title}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<p class='app-subtitle'>{subtitle}</p>", unsafe_allow_html=True)
 
     currency = st.session_state.get("household_currency", "FJD")
     role = st.session_state.get("user_role", "viewer")
 
-    tab_cycle, tab_calc, tab_periods, tab_savings = st.tabs([
-        "⚙️ Pay & Budget Cycle",
-        "🔢 Budget Calculator",
-        "📅 Period Manager",
-        "📈 Projected Savings",
-    ])
+    if embedded:
+        tab_cycle = tab_calc = tab_periods = tab_savings = None
+    else:
+        tab_cycle, tab_calc, tab_periods, tab_savings = st.tabs([
+            "⚙️ Pay & Budget Cycle",
+            "🔢 Budget Calculator",
+            "📅 Period Manager",
+            "📈 Projected Savings",
+        ])
 
     with get_db() as db:
         household = db.query(Household).filter(Household.id == household_id).first()
@@ -72,14 +103,15 @@ def show_pay_settings(household_id: int):
             return
 
         # Read persisted settings
-        pay_freq      = _get_setting(db, household_id, "pay_frequency",
-                                     household.budget_method or "fortnightly")
-        budget_method = household.budget_method or "fortnightly"
+        pay_freq      = _norm_freq(_get_setting(
+            db, household_id, "pay_frequency", household.budget_method or "fortnightly",
+        ))
+        budget_method = _norm_freq(household.budget_method or "fortnightly")
 
         # ══════════════════════════════════════════════════════
         # TAB 1 – PAY & BUDGET CYCLE
         # ══════════════════════════════════════════════════════
-        with tab_cycle:
+        with _settings_section(embedded, tab_cycle, "⚙️ Pay & Budget Cycle", expanded=True):
             st.subheader("⚙️ Pay Frequency & Budget Method")
 
             if role == "viewer":
@@ -144,6 +176,26 @@ def show_pay_settings(household_id: int):
                     )
                     st.rerun()
 
+            if role in ("owner", "partner"):
+                st.markdown("---")
+                st.subheader("🔔 Bill reminders")
+                st.caption(
+                    "When enabled, reminders start one day before anything is due (bills, subscriptions, "
+                    "recurring expenses, debt, sinking funds, and savings goals). Emails repeat every hour "
+                    "until you log in to update your schedule or click **Stop reminders** on the dashboard. "
+                    "Your next reminder is sent one day before the next upcoming payment."
+                )
+                import json
+                from services.notification_service import get_notification_channels
+                current_channels = get_notification_channels(db, household_id)
+                rem_email = st.checkbox("Email reminders", value="email" in current_channels, key="rem_email")
+                if st.button("Save reminder preferences", key="save_reminders"):
+                    channels = ["in_app"]
+                    if rem_email:
+                        channels.append("email")
+                    _set_setting(db, household_id, "notification_channels", json.dumps(channels))
+                    st.success("Reminder preferences saved.")
+
             # Summary cards
             st.markdown("---")
             mc1, mc2, mc3 = st.columns(3)
@@ -157,7 +209,7 @@ def show_pay_settings(household_id: int):
         # ══════════════════════════════════════════════════════
         # TAB 2 – BUDGET CALCULATOR
         # ══════════════════════════════════════════════════════
-        with tab_calc:
+        with _settings_section(embedded, tab_calc, "🔢 Budget Calculator"):
             st.subheader("🔢 Cross-Frequency Budget Calculator")
             st.write(
                 "Enter your per-pay-cheque income and expenses. The calculator will "
@@ -237,7 +289,7 @@ def show_pay_settings(household_id: int):
         # ══════════════════════════════════════════════════════
         # TAB 3 – PERIOD MANAGER
         # ══════════════════════════════════════════════════════
-        with tab_periods:
+        with _settings_section(embedded, tab_periods, "📅 Period Manager"):
             st.subheader("📅 Pay Period Manager")
 
             all_periods = db.query(PayPeriod).filter(
@@ -291,10 +343,10 @@ def show_pay_settings(household_id: int):
                         "Start Date":   p.start_date.strftime("%d %b %Y"),
                         "End Date":     p.end_date.strftime("%d %b %Y"),
                         "Status":       "🟢 Active" if is_active else ("⏳ Upcoming" if p.start_date > today else "✅ Past"),
-                        "Days Left":    days_left if days_left is not None else "—",
+                        "Days Left":    str(days_left) if days_left is not None else "—",
                     })
                 df_periods = pd.DataFrame(period_rows)
-                st.dataframe(df_periods, hide_index=True, use_container_width=True)
+                st.dataframe(df_periods, hide_index=True, width="stretch")
 
                 # Delete a period
                 if role != "viewer":
@@ -331,7 +383,7 @@ def show_pay_settings(household_id: int):
         # ══════════════════════════════════════════════════════
         # TAB 4 – PROJECTED SAVINGS
         # ══════════════════════════════════════════════════════
-        with tab_savings:
+        with _settings_section(embedded, tab_savings, "📈 Projected Savings"):
             st.subheader("📈 Projected Savings")
             st.write(
                 "Based on your recurring income and committed recurring expenses/subscriptions, "
@@ -428,7 +480,7 @@ def show_pay_settings(household_id: int):
                         f"Per Pay":       format_currency(i.amount, currency),
                         "Annual Total":   format_currency(ann, currency),
                     })
-                st.dataframe(pd.DataFrame(inc_rows), hide_index=True, use_container_width=True)
+                st.dataframe(pd.DataFrame(inc_rows), hide_index=True, width="stretch")
 
             # Expense breakdown table
             if rec_expenses or subscriptions:
@@ -452,7 +504,7 @@ def show_pay_settings(household_id: int):
                         "Per Occurrence": format_currency(s.amount, currency),
                         "Annual Total": format_currency(ann, currency),
                     })
-                st.dataframe(pd.DataFrame(out_rows), hide_index=True, use_container_width=True)
+                st.dataframe(pd.DataFrame(out_rows), hide_index=True, width="stretch")
 
             if not rec_incomes and not rec_expenses and not subscriptions:
                 st.info(
@@ -478,4 +530,4 @@ def show_pay_settings(household_id: int):
                     "Cumulative Savings": round(running, 2),
                 })
             df_proj = pd.DataFrame(cum_rows)
-            st.dataframe(df_proj, hide_index=True, use_container_width=True)
+            st.dataframe(df_proj, hide_index=True, width="stretch")

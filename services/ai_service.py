@@ -42,14 +42,25 @@ def auto_tag_category(merchant: str, categories: list) -> str:
     return ""  # No suggestion found
 
 
-def get_financial_context(db: DBSession, household_id: int) -> dict:
+def get_financial_context(db: DBSession, household_id: int, days: int | None = None) -> dict:
 
     """
     Assembles a dictionary representation of the household's financial health
-    to inject into the AI context.
+    to inject into the AI context. When days is set, only transactions within
+    that window are included (recommended for affordability checks).
     """
-    incomes = db.query(Income).filter(Income.household_id == household_id).all()
-    expenses = db.query(Expense).filter(Expense.household_id == household_id).all()
+    since = None
+    if days is not None:
+        since = datetime.date.today() - datetime.timedelta(days=days)
+
+    q_income = db.query(Income).filter(Income.household_id == household_id)
+    q_expense = db.query(Expense).filter(Expense.household_id == household_id)
+    if since:
+        q_income = q_income.filter(Income.date >= since)
+        q_expense = q_expense.filter(Expense.date >= since)
+
+    incomes = q_income.all()
+    expenses = q_expense.all()
     debts = db.query(Debt).filter(Debt.household_id == household_id).all()
     goals = db.query(SavingsGoal).filter(SavingsGoal.household_id == household_id).all()
     funds = db.query(SinkingFund).filter(SinkingFund.household_id == household_id).all()
@@ -225,7 +236,7 @@ def analyze_affordability(
     """
     Computes if a household can afford a purchase based on cashflow, debts, and savings.
     """
-    ctx = get_financial_context(db, household_id)
+    ctx = get_financial_context(db, household_id, days=30)
     monthly_payment = price / terms_months if terms_months > 0 else price
     
     # Determine essential balance threshold

@@ -11,8 +11,8 @@ def show_ai_coach(household_id: int):
     """
     Renders the AI Coach chatbot assistant, affordability calculator, and anomaly detector.
     """
-    st.markdown("<h1 class='app-title'>SmartBudget AI Coach</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='app-subtitle'>Receive personalized strategies, reviews, and transaction affordability analytics</p>", unsafe_allow_html=True)
+    st.markdown("<h1 class='app-title'>Money Coach</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='app-subtitle'>Quick answers about your budget, spending, and debt</p>", unsafe_allow_html=True)
     
     tab_chat, tab_afford, tab_debt, tab_review = st.tabs(["💬 AI Budget Coach", "🛍️ Can I Afford It?", "📈 Debt Strategist", "🔍 Monthly Reviews & Anomalies"])
     
@@ -27,12 +27,31 @@ def show_ai_coach(household_id: int):
         # AI BUDGET COACH CHAT TAB
         # ----------------------------------------------------
         with tab_chat:
-            st.subheader("Chat with your Budget Coach")
-            st.write("Ask questions about saving, debt strategies (snowball vs avalanche), category limits, or general financial advice.")
-            
-            # Setup session state chat history
+            st.subheader("Your Money Coach")
+            st.caption("Tap a question below or type your own.")
+
+            guided = [
+                ("on_track", "📊 Am I on track this pay cycle?", "Am I on track with my budget this pay cycle? Give me a short, actionable summary."),
+                ("afford", "🛍️ Can I afford a purchase?", "How should I decide if I can afford a non-essential purchase this pay cycle?"),
+                ("cut", "✂️ What should I cut?", "Looking at my spending, what categories should I reduce to improve my savings rate?"),
+                ("debt", "⛓️ How do I tackle debt?", "How can I tackle my debts? Explain snowball vs avalanche briefly for my situation."),
+            ]
+            gcols = st.columns(len(guided))
+            for col, (key, label, query) in zip(gcols, guided):
+                with col:
+                    if st.button(label, width="stretch", key=f"guide_{key}"):
+                        st.session_state["coach_pending_query"] = query
+
             if "chat_history" not in st.session_state:
                 st.session_state["chat_history"] = []
+
+            pending = st.session_state.pop("coach_pending_query", None)
+            if pending:
+                st.session_state["chat_history"].append({"role": "user", "content": pending})
+                with st.spinner("Thinking..."):
+                    answer = ask_budget_coach(db, household_id, pending)
+                st.session_state["chat_history"].append({"role": "assistant", "content": answer})
+                st.rerun()
                 
             # Render chat history
             for msg in st.session_state["chat_history"]:
@@ -193,19 +212,22 @@ def show_ai_coach(household_id: int):
                             name="Avalanche", mode="lines",
                             line=dict(color="rgba(255,107,107,0.9)", width=2.5)
                         ))
+                        from utils.styles import get_chart_colors
+                        cc = get_chart_colors()
+                        cf = cc.get("font") or "#94a3b8"
                         fig.update_layout(
                             height=300,
                             xaxis_title="Month",
                             yaxis_title=f"Balance ({currency})",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            font_color="white",
+                            paper_bgcolor=cc["paper"],
+                            plot_bgcolor=cc["plot"],
+                            font_color=cf,
                             font_family="Outfit",
                             legend=dict(orientation="h", yanchor="bottom", y=1.02),
                             xaxis=dict(showgrid=False),
                             yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
 
                 # AI-driven strategic advice
                 st.write("")

@@ -1,4 +1,5 @@
 import os
+import secrets
 import urllib.parse
 from dotenv import load_dotenv
 
@@ -69,15 +70,24 @@ DATABASE_URL = _clean_db_url(DATABASE_URL)
 # AI Service Config
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# Security Config
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-key-12345")
+# Security Config — require an explicit secret in production
+_jwt_from_env = os.getenv("JWT_SECRET", "").strip()
+if _jwt_from_env:
+    JWT_SECRET = _jwt_from_env
+else:
+    JWT_SECRET = secrets.token_hex(32)
+    print(
+        "[SECURITY WARNING] JWT_SECRET is not set in .env — "
+        "a random secret was generated for this session only. "
+        "Set JWT_SECRET in your .env file for production."
+    )
 
-# Notification Config (Simulated channels if config is missing)
-WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN", "")
+# Email notifications (simulated in terminal if SMTP credentials are missing)
 EMAIL_SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com")
 EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
 EMAIL_SMTP_USER = os.getenv("EMAIL_SMTP_USER", "")
 EMAIL_SMTP_PASSWORD = os.getenv("EMAIL_SMTP_PASSWORD", "")
+EMAIL_SMTP_USE_SSL = os.getenv("EMAIL_SMTP_USE_SSL", "").lower() in ("1", "true", "yes")
 
 # Platform Defaults
 DEFAULT_CURRENCY = "FJD"

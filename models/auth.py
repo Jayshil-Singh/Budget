@@ -13,6 +13,8 @@ class User(Base):
     full_name = Column(String, nullable=False)
     role = Column(String, nullable=False, default="viewer")  # admin, owner, partner, viewer
     is_active = Column(Boolean, default=True, nullable=False)
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    ui_theme = Column(String, nullable=False, default="system")  # system, light, dark
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     
