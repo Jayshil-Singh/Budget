@@ -60,6 +60,16 @@ Schedule in **Windows Task Scheduler** or cron **every hour**. Payment reminders
 
 > `smartbudget.db` is gitignored — do not commit live household data.
 
+### Deploy on Streamlit Cloud (with Supabase)
+
+Streamlit Cloud **cannot** use Supabase **direct** connections (`db.*.supabase.co:5432`) — you will see `Cannot assign requested address`. Use the **transaction pooler** instead:
+
+1. In [Supabase](https://supabase.com) → **Project Settings → Database → Connection string → Connection pooling** (Transaction mode, port **6543**).
+2. In Streamlit Cloud → **App settings → Secrets**, paste that URI as `DATABASE_URL` (see `.streamlit/secrets.toml.example`).
+3. Optional: set `SUPABASE_POOLER_REGION` if the auto-rewrite picks the wrong AWS region (default `ap-southeast-2`).
+
+The app auto-rewrites direct Supabase URLs to the pooler when deployed. Set `SUPABASE_USE_DIRECT=true` only if you run on a host that supports direct IPv4/5432.
+
 ---
 
 ## 🔑 Demo Credentials

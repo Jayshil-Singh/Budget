@@ -60,12 +60,71 @@ def _clean_db_url(url_str: str) -> str:
         
     return f"{scheme}://{new_authority}{path_query}"
 
+
+def _prepare_postgres_url(url_str: str) -> str:
+    """
+    Streamlit Cloud and other serverless hosts often cannot reach Supabase direct
+    connections (db.*.supabase.co:5432 over IPv6). Rewrite to the transaction
+    pooler unless SUPABASE_USE_DIRECT=true or the URL already uses a pooler.
+    """
+    import re
+
+    if not url_str.startswith("postgresql://"):
+        return url_str
+    if os.getenv("SUPABASE_USE_DIRECT", "").lower() in ("1", "true", "yes"):
+        return url_str
+    if "pooler.supabase.com" in url_str:
+        return url_str
+
+    match = re.match(
+        r"^postgresql://(?P<user>[^:]+):(?P<password>[^@]+)"
+        r"@db\.(?P<ref>[^.]+)\.supabase\.co:5432/(?P<dbname>.+)$",
+        url_str,
+    )
+    if not match:
+        return url_str
+
+    ref = match.group("ref")
+    user = match.group("user")
+    password = match.group("password")
+    dbname = match.group("dbname")
+    pooler_host = os.getenv("SUPABASE_POOLER_HOST", "").strip()
+    if not pooler_host:
+        region = os.getenv("SUPABASE_POOLER_REGION", "ap-southeast-2")
+        pooler_host = f"aws-0-{region}.pooler.supabase.com"
+    pooler_port = os.getenv("SUPABASE_POOLER_PORT", "6543")
+    pooler_user = user if user.startswith("postgres.") else f"postgres.{ref}"
+
+    rewritten = (
+        f"postgresql://{pooler_user}:{password}@{pooler_host}:{pooler_port}/{dbname}"
+    )
+    print(
+        "[DB] Rewrote Supabase direct URL to transaction pooler for cloud compatibility. "
+        "Set SUPABASE_USE_DIRECT=true to keep db.*.supabase.co:5432."
+    )
+    return rewritten
+
+
+def _get_secret(key: str, default: str = "") -> str:
+    """Read env var, with Streamlit Cloud secrets as fallback."""
+    value = os.getenv(key)
+    if value:
+        return value
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return default
+
 # Database Config
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///smartbudget.db")
+DATABASE_URL = _get_secret("DATABASE_URL", "sqlite:///smartbudget.db")
 if DATABASE_URL.startswith("postgres://"):
     # Fix for SQLAlchemy compatibility with older postgres:// prefixes
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 DATABASE_URL = _clean_db_url(DATABASE_URL)
+DATABASE_URL = _prepare_postgres_url(DATABASE_URL)
 
 # AI Service Config
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
