@@ -61,14 +61,19 @@ def _clean_db_url(url_str: str) -> str:
     return f"{scheme}://{new_authority}{path_query}"
 
 
+def _parse_postgres_url(url_str: str) -> urllib.parse.ParseResult | None:
+    """Parse a PostgreSQL URL; returns None if not a valid postgresql URL."""
+    if not url_str.startswith("postgresql://"):
+        return None
+    return urllib.parse.urlparse(url_str)
+
+
 def _prepare_postgres_url(url_str: str) -> str:
     """
     Streamlit Cloud and other serverless hosts often cannot reach Supabase direct
     connections (db.*.supabase.co:5432 over IPv6). Rewrite to the transaction
     pooler unless SUPABASE_USE_DIRECT=true or the URL already uses a pooler.
     """
-    import re
-
     if not url_str.startswith("postgresql://"):
         return url_str
     if os.getenv("SUPABASE_USE_DIRECT", "").lower() in ("1", "true", "yes"):
@@ -76,18 +81,22 @@ def _prepare_postgres_url(url_str: str) -> str:
     if "pooler.supabase.com" in url_str:
         return url_str
 
-    match = re.match(
-        r"^postgresql://(?P<user>[^:]+):(?P<password>[^@]+)"
-        r"@db\.(?P<ref>[^.]+)\.supabase\.co:5432/(?P<dbname>.+)$",
-        url_str,
-    )
-    if not match:
+    parsed = _parse_postgres_url(url_str)
+    if not parsed or not parsed.hostname:
         return url_str
 
-    ref = match.group("ref")
-    user = match.group("user")
-    password = match.group("password")
-    dbname = match.group("dbname")
+    host = parsed.hostname
+    if not host.startswith("db.") or not host.endswith(".supabase.co"):
+        return url_str
+    if parsed.port not in (None, 5432):
+        return url_str
+
+    ref = host[len("db.") : -len(".supabase.co")]
+    user = parsed.username or "postgres"
+    password = parsed.password or ""
+    dbname = (parsed.path or "/postgres").lstrip("/") or "postgres"
+    encoded_password = urllib.parse.quote(password, safe="")
+
     pooler_host = os.getenv("SUPABASE_POOLER_HOST", "").strip()
     if not pooler_host:
         region = os.getenv("SUPABASE_POOLER_REGION", "ap-southeast-2")
@@ -95,9 +104,8 @@ def _prepare_postgres_url(url_str: str) -> str:
     pooler_port = os.getenv("SUPABASE_POOLER_PORT", "6543")
     pooler_user = user if user.startswith("postgres.") else f"postgres.{ref}"
 
-    rewritten = (
-        f"postgresql://{pooler_user}:{password}@{pooler_host}:{pooler_port}/{dbname}"
-    )
+    auth = f"{pooler_user}:{encoded_password}" if encoded_password else pooler_user
+    rewritten = f"postgresql://{auth}@{pooler_host}:{pooler_port}/{dbname}"
     print(
         "[DB] Rewrote Supabase direct URL to transaction pooler for cloud compatibility. "
         "Set SUPABASE_USE_DIRECT=true to keep db.*.supabase.co:5432."
@@ -119,7 +127,7 @@ def _get_secret(key: str, default: str = "") -> str:
     return default
 
 # Database Config
-DATABASE_URL = _get_secret("DATABASE_URL", "sqlite:///smartbudget.db")
+DATABASE_URL = _get_secret("DATABASE_URL", "sqlite:///smartbudget.db").strip().strip('"').strip("'")
 if DATABASE_URL.startswith("postgres://"):
     # Fix for SQLAlchemy compatibility with older postgres:// prefixes
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
