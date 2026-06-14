@@ -97,12 +97,12 @@ def _prepare_postgres_url(url_str: str) -> str:
     dbname = urllib.parse.unquote((parsed.path or "/postgres").lstrip("/")) or "postgres"
     encoded_password = urllib.parse.quote(password, safe="")
 
-    pooler_host = os.getenv("SUPABASE_POOLER_HOST", "").strip()
+    pooler_host = _get_secret("SUPABASE_POOLER_HOST", "").strip()
     if not pooler_host:
-        region = os.getenv("SUPABASE_POOLER_REGION", "ap-southeast-2")
-        prefix = os.getenv("SUPABASE_POOLER_PREFIX", "aws-0").strip()
+        region = _get_secret("SUPABASE_POOLER_REGION", "ap-southeast-2").strip()
+        prefix = _get_secret("SUPABASE_POOLER_PREFIX", "aws-0").strip()
         pooler_host = f"{prefix}-{region}.pooler.supabase.com"
-    pooler_port = os.getenv("SUPABASE_POOLER_PORT", "6543")
+    pooler_port = _get_secret("SUPABASE_POOLER_PORT", "6543").strip()
     pooler_user = user if user.startswith("postgres.") else f"postgres.{ref}"
 
     auth = f"{pooler_user}:{encoded_password}" if encoded_password else pooler_user
