@@ -92,9 +92,9 @@ def _prepare_postgres_url(url_str: str) -> str:
         return url_str
 
     ref = host[len("db.") : -len(".supabase.co")]
-    user = parsed.username or "postgres"
-    password = parsed.password or ""
-    dbname = (parsed.path or "/postgres").lstrip("/") or "postgres"
+    user = urllib.parse.unquote(parsed.username or "postgres")
+    password = urllib.parse.unquote(parsed.password or "")
+    dbname = urllib.parse.unquote((parsed.path or "/postgres").lstrip("/")) or "postgres"
     encoded_password = urllib.parse.quote(password, safe="")
 
     pooler_host = os.getenv("SUPABASE_POOLER_HOST", "").strip()
