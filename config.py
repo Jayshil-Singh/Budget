@@ -100,7 +100,8 @@ def _prepare_postgres_url(url_str: str) -> str:
     pooler_host = os.getenv("SUPABASE_POOLER_HOST", "").strip()
     if not pooler_host:
         region = os.getenv("SUPABASE_POOLER_REGION", "ap-southeast-2")
-        pooler_host = f"aws-0-{region}.pooler.supabase.com"
+        prefix = os.getenv("SUPABASE_POOLER_PREFIX", "aws-0").strip()
+        pooler_host = f"{prefix}-{region}.pooler.supabase.com"
     pooler_port = os.getenv("SUPABASE_POOLER_PORT", "6543")
     pooler_user = user if user.startswith("postgres.") else f"postgres.{ref}"
 
