@@ -175,11 +175,11 @@ def show_dashboard(household_id: int):
             st.caption(t("no_bills", locale))
 
         if status_style == "good":
-            st.success(status_msg)
+            st.success(status_msg.replace("$", r"\$"))
         elif status_style == "critical":
-            st.error(status_msg)
+            st.error(status_msg.replace("$", r"\$"))
         else:
-            st.warning(status_msg)
+            st.warning(status_msg.replace("$", r"\$"))
 
         # Recurring pattern suggestions
         patterns = detect_recurring_patterns(db, household_id)
